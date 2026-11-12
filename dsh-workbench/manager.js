@@ -367,7 +367,7 @@ export function createManagerService(deps) {
         state.stage = body.stage;
         await deps.saveState(root, id, state);
         doc.delivery = null;
-        doc.proposal = { id: randomUUID(), stage: body.stage, instruction, createdAt: now() };
+        doc.proposal = { id: randomUUID(), kind: 'revision', stage: body.stage, instruction, createdAt: now() };
         say(doc, '已重新开启这份成果及受影响的后续审阅，历史确认仍保留。请核对下面的修改安排后开始。');
         break;
       }

@@ -1,6 +1,6 @@
 {
   "name": "dsh-workbench",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "private": true,
   "description": "A product development workbench with versioned document review, traceable project knowledge and inspectable stage context",
   "type": "module",

@@ -16,7 +16,7 @@ async function client(fetcher = async () => { throw new Error('Unexpected reques
     URL, AbortController,
   });
   const source = (await readFile(new URL('../client.js', import.meta.url), 'utf8')).replace(
-    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { managerApprovalReason, ManagerResultsSheet, supportsManagerPresentation, ManagerActionCard, Button, useToast, disabledToastListeners, workbenchStore, managerBlocks, proposalLines, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
+    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { ManagerSetup, managerModePreference, managerApprovalReason, ManagerResultsSheet, supportsManagerPresentation, ManagerActionCard, Button, useToast, disabledToastListeners, workbenchStore, managerBlocks, proposalLines, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
   assert.ok(source.includes('globalThis.testClient'), 'client test seam inserted');
   vm.runInContext(source, context);
   factory((name) => { if (name === 'react') return React; throw new Error(name); });
@@ -356,4 +356,16 @@ test('reader switches modal presentation without replacing its document subtree'
  const c=await client(undefined,{useRef:()=>({current:dialog}),useEffect:fn=>effects.push(fn)});const content={type:'article',props:{children:['草稿评论']}};
  let tree=c.ManagerResultsSheet({simple:true,open:true,onClose(){},children:content});effects.pop()();assert.equal(dialog.shown,1);assert.ok(tree.props.children.flat().includes(content));
  tree=c.ManagerResultsSheet({simple:false,open:false,onClose(){},children:content});effects.pop()();assert.equal(dialog.modal,false);assert.equal(dialog.open,true);assert.ok(tree.props.children.flat().includes(content));
+});
+
+test('new users default to simple while an explicit full-mode preference is preserved',async()=>{
+ const c=await client();assert.equal(c.managerModePreference(null),'simple');assert.equal(c.managerModePreference('simple'),'simple');assert.equal(c.managerModePreference('full'),'full');
+});
+test('first setup step does not create a contract and second step uses the explicit goal, not purpose',async()=>{
+ const sets=[],configured=[];let values=[1,'requirements'];
+ const c=await client(undefined,{useState:()=>[values.shift(),value=>sets.push(value)],useRef:()=>({current:null}),useEffect(){}});
+ const props={name:'',goal:'让客人预约',scenario:'thesis',setName:value=>sets.push(value),setGoal(){},setScenario(){},busy:false,onConfigure:mode=>configured.push(mode)};
+ let form=c.ManagerSetup(props);form.props.onSubmit({preventDefault(){}});assert.equal(configured.length,0);assert.ok(sets.includes(2));
+ values=[2,'requirements'];form=c.ManagerSetup(props);form.props.onSubmit({preventDefault(){}});assert.equal(configured[0],'requirements');
+ values=[2,'software'];form=c.ManagerSetup(props);form.props.onSubmit({preventDefault(){}});assert.equal(configured[1],'software');
 });

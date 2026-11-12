@@ -5921,7 +5921,8 @@ ${text.trim().slice(0, 20_000)}
     function supportsManagerPresentation(p) {
       return p?.schemaVersion===1 && Number.isInteger(p.revision) && typeof p.title==='string' && typeof p.description==='string' && Array.isArray(p.blockingReasons) && MANAGER_ACTIONS.has(p.primaryAction?.kind) && typeof p.primaryAction.label==='string' && Array.isArray(p.secondaryActions) && p.secondaryActions.every(a=>MANAGER_ACTIONS.has(a.kind) && typeof a.label==='string') && (p.primaryAction.kind!=='answer' || (p.question?.id===p.primaryAction.questionId && typeof p.question.text==='string'));
     }
-    function readManagerMode() {try {return localStorage.getItem('dshwb-manager-mode')==='simple'?'simple':'full';} catch {return 'full';}}
+    function managerModePreference(saved) {return saved==='full'?'full':'simple';}
+    function readManagerMode() {try {return managerModePreference(localStorage.getItem('dshwb-manager-mode'));} catch {return 'simple';}}
     function ManagerActionCard({ presentation:p, busy, onAction, onAnswer }) {
       const primary=p.primaryAction;
       return h('section',{className:'dshpm-actionCard','aria-label':'现在需要你做什么'},[
@@ -5960,6 +5961,36 @@ ${text.trim().slice(0, 20_000)}
       ]);
     }
 
+    const MANAGER_GOAL_OPTIONS = [
+      {mode:'requirements',title:'先把需求写清楚',description:'拿到需求说明书，先决定要做什么。'},
+      {mode:'design',title:'给我一份能照着做的方案',description:'拿到需求说明书和实施设计方案。'},
+      {mode:'software',title:'帮我做出可以使用的东西',description:'依次准备需求、设计、实现、测试和交付；使用效果仍需核对。'},
+    ];
+    function ManagerSetup({name,goal,scenario,setName,setGoal,setScenario,busy,onConfigure}) {
+      const [step,setStep]=React.useState(1);
+      const [mode,setMode]=React.useState('requirements');
+      const heading=React.useRef(null);
+      React.useEffect(()=>{heading.current?.focus();},[step]);
+      const next=()=>{if(!goal.trim() || busy)return;if(!name.trim())setName(goal.trim().slice(0,20));setStep(2);};
+      const chosen=MANAGER_GOAL_OPTIONS.find(item=>item.mode===mode);
+      return h('form',{className:'dshpm-setup',onSubmit:e=>{e.preventDefault();if(step===1)next();else if(!busy && goal.trim() && chosen)onConfigure(mode);}},[
+        h('p',{key:'step',className:'dshpm-eyebrow'},`第 ${step} 步，共 2 步`),
+        h('h2',{key:'heading',ref:heading,tabIndex:-1},step===1?'你想解决什么问题？':'这次希望先拿到什么？'),
+        step===1?h('div',{key:'idea'},[
+          h('label',{key:'name'},'项目名字（可选）',h('input',{className:'dshwb-input',maxLength:100,value:name,onChange:e=>setName(e.target.value),placeholder:'例如：小店预约'})),
+          h('label',{key:'goal'},'说说你的想法',h('textarea',{className:'dshwb-input',rows:4,maxLength:8000,value:goal,onChange:e=>setGoal(e.target.value),placeholder:'例如：我开了一家理发店，希望客人能在手机上预约。先帮我把需求写清楚。'})),
+          h('p',{key:'hint',className:'dshwb-hint'},'不用填写技术方案。只要说清楚谁遇到什么问题、希望有什么改变。'),
+          h(Button,{key:'next',kind:'primary',disabled:busy || !goal.trim(),disabledReason:busy?'正在处理，请稍等。':'请先填写你的想法。',onClick:next},'下一步：选择想要的成果')
+        ]):h('div',{key:'scope'},[
+          h('p',{key:'idea'},'你的想法：'+goal),
+          h('div',{key:'choices',className:'dshpm-goals',role:'group','aria-label':'本次交付目标'},MANAGER_GOAL_OPTIONS.map(option=>h('button',{key:option.mode,type:'button','aria-pressed':mode===option.mode,onClick:()=>setMode(option.mode)},h('strong',null,option.title),h('span',null,option.description)))),
+          h('details',{key:'purpose'},h('summary',null,'补充用途（可选）'),h('label',null,'项目用途',h('select',{className:'dshwb-input',value:scenario,onChange:e=>setScenario(e.target.value)},[['product','产品开发'],['thesis','毕业设计'],['pitch','产品概念 / 融资']].map(([value,label])=>h('option',{key:value,value},label)))),h('p',{className:'dshwb-hint'},'用途只影响附加文档选项，不会扩大你刚才选择的交付目标。缺少的真实材料仍需要补充。')),
+          h('p',{key:'confirm',className:'dshpm-scopeNotice'},`本次约定：${chosen?.description || ''} 不会自动发布或产生费用。`),
+          h('div',{key:'actions',className:'dshpm-actions'},h(Button,{disabled:busy,disabledReason:'正在创建项目，请等待完成。',onClick:()=>setStep(1)},'上一步：修改想法'),h(Button,{kind:'primary',type:'submit',disabled:busy || !goal.trim() || !chosen,disabledReason:busy?'正在创建项目，请等待完成。':'请先填写想法并选择本次成果。'},'确认目标，请管家接下项目'))
+        ])
+      ]);
+    }
+
     function PersonalManagerPage(props) {
       const { state, meta, store } = useWorkbench();
       const copy = copyFor(useLocaleId(props.localeRuntime));
@@ -5977,7 +6008,6 @@ ${text.trim().slice(0, 20_000)}
       const [goal, setGoal] = React.useState('');
       const [name, setName] = React.useState('');
       const [scenario, setScenario] = React.useState('product');
-      const SCENARIO_MODE = { product: 'software', thesis: 'software', pitch: 'requirements' };
       const [tab, setTab] = React.useState('documents');
       const [selectedStage, setSelectedStage] = React.useState('spec');
       const [reviewed, setReviewed] = React.useState(false);
@@ -6094,10 +6124,10 @@ ${text.trim().slice(0, 20_000)}
         } catch (err) { setError(err.message); }
         finally { setBusy(false); }
       };
-      const configure = async (event) => {
-        event.preventDefault();
+      const configure = async (mode) => {
+        if(!MANAGER_GOAL_OPTIONS.some(item=>item.mode===mode) || !goal.trim()){showToast('请先填写想法并选择本次成果。');return;}
         store.patchProject({ name: name.trim() || '我的项目' });
-        await mutate({ action: 'configure', mode: SCENARIO_MODE[scenario] || 'software', goal, scenario });
+        await mutate({ action: 'configure', mode, goal, scenario });
       };
       const runManagerAction = async (action,revision) => {
         if(!supportsManagerPresentation(data?.presentation) || revision!==data.revision || !MANAGER_ACTIONS.has(action.kind)) {showToast('安排已变化，请查看最新提示。');return;}
@@ -6193,27 +6223,7 @@ ${text.trim().slice(0, 20_000)}
         simple && data.contract?h('div',{key:'simple-tools',className:'dshpm-actions'},[
           h(Button,{key:'results',onClick:()=>setSimpleResultsOpen(v=>!v)},simpleResultsOpen?'收起成果':`我的成果（${data.outputs.length}）`),
           h(Button,{key:'history',onClick:()=>{setTab('history');setSimpleResultsOpen(true);}},'历史记录')]):null,
-        data && !data.contract ? h('form', { key: 'setup', className: 'dshpm-setup', onSubmit: configure }, [
-          h('h2', { key: 'title' }, '这次想让我帮你完成什么？'),
-          h('p', { key: 'scenarioLabel', className: 'dshpm-eyebrow' }, '这个项目主要用来做什么？（只选一个）'),
-          h('div', { key: 'scenarios', className: 'dshpm-goals', role: 'group', 'aria-label': '项目场景' },
-            [
-              ['thesis', '毕业设计', '论文、开题报告与答辩材料'],
-              ['product', '产品开发', '需求、设计、测试与交付文档'],
-              ['pitch', '产品概念 / 融资', '行业调研、竞品分析与概念演示'],
-            ].map(([value, title, description]) =>
-              h('button', { key: value, type: 'button', 'aria-pressed': scenario === value, onClick: () => setScenario(value) },
-                h('strong', null, title), h('span', null, description)))),
-          h('p', { key: 'plan', className: 'dshwb-hint' },
-            scenario === 'pitch'
-              ? '会按「需求文档」这一档交付，并额外提供行业调研、竞品分析与概念演示。'
-              : '会依次准备需求、设计、实现、验证与交付文档' + (scenario === 'thesis' ? '，并额外提供开题报告、论文与答辩材料。' : '。')),
-
-          h('label', { key: 'name' }, '给项目起个名字', h('input', { className: 'dshwb-input', maxLength: 100, value: name, onChange: e => setName(e.target.value), placeholder: '例如：小店预约' })),
-          h('label', { key: 'goal' }, '说说你的想法', h('textarea', { className: 'dshwb-input', rows: 4, required: true, maxLength: 8000, value: goal, onChange: e => setGoal(e.target.value), placeholder: '例如：我开了一家理发店，希望客人能在手机上预约。' })),
-          h('p', { key: 'help', className: 'dshwb-hint' }, '不需要懂技术。正式文档会完整保留，可以阅读、修改和下载；外部发布与费用不会自动执行。'),
-          h(Button, { key: 'submit', type: 'submit', kind: 'primary', disabled: busy || !goal.trim(), disabledReason:busy ? '正在创建项目，请等待完成。' : '请先填写你的想法或项目目标。' }, '请管家接下这个项目'),
-        ]) : data ? h('div', { key: 'layout', className: 'dshpm-layout' }, [
+        data && !data.contract ? h(ManagerSetup,{key:identity,name,goal,scenario,setName,setGoal,setScenario,busy,onConfigure:configure}) : data ? h('div', { key: 'layout', className: 'dshpm-layout' }, [
           h('section', { key: 'chat', className: 'dshpm-conversation', 'aria-label': '和管家说' }, [
             h('h2', { key: 'title' }, '和管家说'),
             !data.available ? h('p', { key: 'unavailable', role: 'alert' }, '管家执行服务尚未连接，请重启 DSH Host。') : null,
@@ -8138,6 +8148,11 @@ textarea.dshwb-input { resize: vertical; }
 }
 .dshpm-question strong { font-weight: 700; }
 
+.dshpm-scopeNotice { border-left: 3px solid #4377ce; padding: 10px 14px; background: var(--dsw-alias-bg-layer-2); }
+.dshpm-simple .dshwb-btn-md,.dshpm-setup .dshwb-btn-md { min-height: 40px; height: auto; white-space: normal; padding-top: 8px; padding-bottom: 8px; }
+.dshpm-setup .dshpm-goals button { min-height: 110px; }
+.dshpm-simple .dshpm-composer textarea,.dshpm-setup input,.dshpm-setup textarea,.dshpm-setup select { font-size: 16px; }
+@media(max-width:600px) { .dshpm-actions { flex-wrap:wrap; } .dshpm-header .dshwb-tabGroup { flex-wrap:wrap; } .dshpm-actionCard { padding:16px; } }
 .dshpm-reader { border: 1px solid var(--dsw-alias-border-l1); border-radius: 16px; padding: 0; width: min(1080px,calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); }
 .dshpm-reader::backdrop { background: #172b4d66; }
 .dshpm-readerHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 22px; position: sticky; top: 0; z-index: 2; background: var(--dsw-alias-bg-layer-1); border-bottom: 1px solid var(--dsw-alias-border-l1); }
@@ -8226,7 +8241,7 @@ textarea.dshwb-input { resize: vertical; }
 
     return {
       inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],
-      __test: { managerBlocks, MessageMarkdown, ManagerMessage, Button, useToast, disabledToastListeners, supportsManagerPresentation, ManagerActionCard, ManagerResultsSheet, managerApprovalReason },
+      __test: { managerBlocks, MessageMarkdown, ManagerMessage, Button, useToast, disabledToastListeners, supportsManagerPresentation, ManagerActionCard, ManagerResultsSheet, managerApprovalReason, ManagerSetup, managerModePreference },
 
       apply(ctx) {
         const localeRuntime = ctx.locale;

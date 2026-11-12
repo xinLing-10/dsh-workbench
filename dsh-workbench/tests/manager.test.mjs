@@ -304,3 +304,8 @@ test('malformed manager JSON fails cleanly without leaking output or dispatching
   const f=await fixture();await setup(f);await f.call({action:'message',text:'准备'});await f.service().tick();await f.finish('{"version":2,"blocks":');
   const view=await f.view();assert.equal(view.jobs.at(-1).status,'failed');assert.equal(view.proposal,null);assert.ok(!view.messages.at(-1).text.includes('"blocks":'));
 });
+
+test('revising a never-approved document offers the new arrangement instead of stale review',async()=>{
+ const f=await fixture();await setup(f);await f.fill();assert.equal((await f.view()).presentation.phase,'needs_review');
+ const result=await f.call({action:'revise',stage:'spec',text:'同一时段支持两位客人'});assert.equal(result.proposal.kind,'revision');assert.equal(result.presentation.phase,'ready_to_start');assert.equal(result.presentation.primaryAction.proposalId,result.proposal.id);assert.equal(f.state.stageData.spec.confirmed,false);
+});

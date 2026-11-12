@@ -29,7 +29,7 @@ export function deriveManagerPresentation(view,state) {
   const proposal=view.proposal;
   // A fresh revision proposal takes precedence over files from the superseded approval.
   const pendingWork=view.jobs.findLast(j=>j.kind==='work' && j.stage===stage);
-  const revising=proposal && stage && state.stageData[stage]?.needsReview;
+  const revising=proposal && stage && (state.stageData[stage]?.needsReview || proposal.kind==='revision');
   if(stage && expected.length && !missing.length && !revising && pendingWork?.status!=='needs_input'){
     set('needs_review',`${TITLES[stage]}准备好了，请你看看`,'核对目标、范围与完成条件；打开阅读不会自动确认。',{kind:'open_review',label:'查看并确认成果',stage});return result;
   }
