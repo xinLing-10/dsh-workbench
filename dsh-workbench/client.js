@@ -5933,6 +5933,33 @@ ${text.trim().slice(0, 20_000)}
       ]);
     }
 
+    function managerApprovalReason({locked,lockedReason,missing,reviewed,stage,checks,buildChecks}) {
+      if(locked)return lockedReason;
+      if(missing.length)return `请先补齐并重新检查文档：${missing.join('、')}。`;
+      if(stage==='build' && buildChecks.some(c=>!checks.includes(c.id)))return '请先逐项完成实现检查清单。';
+      if(!reviewed)return '请先阅读本类文档，并勾选「我已阅读」确认项。';
+      return '';
+    }
+    // One stable subtree in both layouts preserves unfinished document comments.
+    function ManagerResultsSheet({simple,open,onClose,children}) {
+      const ref=React.useRef(null);
+      React.useEffect(()=>{
+        const dialog=ref.current;if(!dialog)return;
+        if(simple) {
+          if(dialog.open && !dialog.matches(':modal'))dialog.close();
+          if(open && !dialog.open)dialog.showModal();
+          if(!open && dialog.open)dialog.close();
+        } else {
+          if(dialog.matches(':modal'))dialog.close();
+          dialog.setAttribute('open','');
+        }
+      },[simple,open]);
+      return h('dialog',{ref,className:simple?'dshpm-reader':'dshpm-reader-full',role:simple?'dialog':'region','aria-modal':simple&&open?true:undefined,'aria-label':'成果阅读与下载',onCancel:e=>{if(simple){e.preventDefault();onClose();}}},[
+        simple?h('header',{key:'reader-head',className:'dshpm-readerHead'},h('strong',null,'成果阅读与下载'),h(Button,{onClick:onClose},'返回对话')):null,
+        children
+      ]);
+    }
+
     function PersonalManagerPage(props) {
       const { state, meta, store } = useWorkbench();
       const copy = copyFor(useLocaleId(props.localeRuntime));
@@ -5940,7 +5967,8 @@ ${text.trim().slice(0, 20_000)}
       const [simpleResultsOpen,setSimpleResultsOpen]=React.useState(false);
       const [showProgress,setShowProgress]=React.useState(false);
       const changeManagerMode = value => {setManagerMode(value);try{localStorage.setItem('dshwb-manager-mode',value);}catch{}};
-      const [data, setData] = React.useState(null);
+      const [rawData, setData] = React.useState(null);
+      const data=rawData?.boardId===state.boardId?rawData:null;
       const simple = managerMode==='simple' && supportsManagerPresentation(data?.presentation);
       const [error, setError] = React.useState('');
       const [busy, setBusy] = React.useState(false);
@@ -6003,6 +6031,7 @@ ${text.trim().slice(0, 20_000)}
         refresh(); const timer = setInterval(refresh, 2500);
         return () => { alive = false; controller.abort(); clearInterval(timer); };
       }, [identity, meta.phase, retry]);
+      React.useEffect(()=>setRevisionText(''),[identity,selectedStage]);
       const selectedHashes = data?.review.stages[selectedStage]?.hashes;
       const hashKey = JSON.stringify(selectedHashes || {});
       React.useEffect(() => { setReviewed(false); setChecks([]); }, [identity, selectedStage, hashKey]);
@@ -6092,6 +6121,56 @@ ${text.trim().slice(0, 20_000)}
       const stage = data?.nextStage || selectedStage;
       const outputs = data?.outputs || [];
       const hasDocument = outputs.some(o => o.stage === selectedStage);
+      const selectedNames = {spec:['需求分析阶段.md','需求分析阶段.docx','需求交接.md',...(state.flow==='incremental'?['现状基线.md']:[])],design:['产品实现设计文档.md','设计交接.md'],build:['启动文档.md','部署文档.md','实现交接.md'],verify:['测试案例.md','测试结果.md','验收交接.md'],ship:['交付清单.md']}[selectedStage] || [];
+      const missingSelected=selectedNames.filter(name=>!selectedHashes?.[name]);
+      const approvalReason=managerApprovalReason({locked,lockedReason,missing:missingSelected,reviewed,stage:selectedStage,checks,buildChecks:data?.buildChecks || []});
+      const results = data?.contract ? h('section', { key: '成果', className: 'dshpm-results', 'aria-label': '我的成果' }, [
+            h('div', { key: 'tabs', className: 'dshwb-tabGroup', role: 'group', 'aria-label': '项目内容' },
+              [['documents', '我的成果'], ['decisions', '等我确认'], ['history', '项目记录']].map(([value, title]) => h('button', { key: value, type: 'button', 'aria-pressed': tab === value, onClick: () => setTab(value) }, title))),
+            tab === 'history' ? h('div', { key: 'history' }, h('h2', null, '项目记录'), h('p', null, `交付目标：${data.contract.goal}`),
+              h('p', { className: 'dshwb-hint' }, '需求文档提供 Word 和 Markdown；其他文档目前提供 Markdown。'),
+              ...data.jobs.map(j => h('article', { key: j.id, className: 'dshpm-record' }, h('strong', null, j.kind === 'conversation' ? '管家沟通' : MANAGER_STAGE_TITLES[j.stage]),
+                h('p', null, MANAGER_JOB_LABELS[j.status]), j.error ? h('p', null, j.error) : null,
+                j.sessionId ? h(Button, { onClick: () => props.openSession(j.sessionId) }, '查看处理记录') : null))) : [
+              h('h2', { key: 'title' }, tab === 'decisions' ? '阅读并确认具体版本' : '文档也是你的正式成果'),
+              data.nextStage && data.nextStage !== selectedStage && outputs.some((o) => o.stage === data.nextStage)
+                ? h('div', { key: 'pendingHint', className: 'dshpm-notice' }, [
+                    h('strong', { key: 'title' }, `待你确认：${MANAGER_STAGE_TITLES[data.nextStage] || data.nextStage}`),
+                    h('p', { key: 'text' }, '这一阶段的文档已经生成，核对后确认即可进入下一阶段。'),
+                    h(Button, { key: 'go', kind: 'primary', onClick: () => setSelectedStage(data.nextStage) }, '去确认'),
+                  ])
+                : null,
+              simple ? h('section',{key:'reading-hints',className:'dshpm-readingHints','aria-label':'本次成果说明'},[
+                h('p',{key:'prepared'},`本类已准备 ${outputs.filter(o=>o.stage===selectedStage).length} 份文件，完整内容和下载都在下面。`),
+                h('p',{key:'check'},'请重点核对目标、处理范围和完成条件；阅读提示不能替代原文。'),
+                h('p',{key:'status'},missingSelected.length?`尚缺：${missingSelected.join('、')}。`:state.stageData[selectedStage]?.confirmed?'你已确认当前版本；需要调整时请提出修改。':'还需要你阅读、核对评论并明确确认当前版本。')
+              ]):null,
+              h('div', { key: 'stages', className: 'dshpm-actions', role: 'group', 'aria-label': '成果分类' },
+                [...new Set([data.nextStage || 'spec', ...outputs.map(o => o.stage)])].map(s => h('button', { key: s, type: 'button', className: 'dshwb-chip', 'aria-pressed': selectedStage === s, onClick: () => setSelectedStage(s) }, MANAGER_STAGE_TITLES[s]))),
+              h('details',{key:'advanced',className:'dshpm-advanced',open:simple?undefined:true},h('summary',null,'更多格式与模板（高级）'),h(TemplatePanel, { key: 'templates', state, stage: selectedStage, scenario: (data.contract && data.contract.scenario) || 'product', refreshKey: data.revision, showToast, download })),
+              h('div', { key: 'files', className: 'dshpm-files' }, outputs.filter(o => o.stage === selectedStage).map(o => h('article', { key: o.name }, h('strong', null, o.name),
+                h('span', null, o.confirmed ? '已确认版本' : '待审阅'), h(Button, { onClick: () => download(o.name, o.name) }, `下载${o.name.endsWith('.docx') ? ' Word' : ''}`)))),
+              hasDocument ? h('div', { key: `document-${identity}-${selectedStage}`, className: 'dshwb-documentWorkspace dshpm-document' },
+                h(DocumentPane, { state, copy, managerMode: true, stage: selectedStage, localeId: 'zh', docsVersion: data.revision, showToast,
+                  onRefresh: () => setRetry(n => n + 1), onGenerateDocx: () => showToast('需求 Word 会在管家任务完成后从正式原稿生成。'),
+                  onRequestChanges: text => { setDraft(text); showToast('修改意见已放入输入框，确认后告诉管家。'); } })) : h('p', { key: 'empty', className: 'dshpm-empty' }, '正式文档准备好后会出现在这里。你可以先和管家聊聊想法。'),
+              data.nextStage === selectedStage && hasDocument ? h('div', { key: 'approval', className: 'dshpm-approval' }, [
+                h('h3', { key: 'title' }, '确认当前文档版本'),
+                h('p', { key: 'hint', className: 'dshwb-hint' }, '请核对本类全部文档。确认会保存版本快照；以后修改将重新审阅。'),
+                selectedStage === 'build' ? data.buildChecks.map(c => h('label', { key: c.id }, h('input', { type: 'checkbox', checked: checks.includes(c.id), onChange: e => setChecks(v => e.target.checked ? [...v, c.id] : v.filter(x => x !== c.id)) }), c.text)) : null,
+                h('label', { key: 'read' }, h('input', { type: 'checkbox', checked: reviewed, onChange: e => setReviewed(e.target.checked) }), '我已阅读本类文档，并确认当前内容符合需要'),
+                h(Button, { key: 'confirm', kind: 'primary', disabled: Boolean(approvalReason), disabledReason:approvalReason, onClick: () => mutate({ action: 'approve', stage: selectedStage, reviewed: true, checks, hashes: selectedHashes }) }, '确认这一版'),
+              ]) : null,
+              hasDocument ? h('details', { key: 'revise', className: 'dshpm-revise' }, h('summary', null, '这份成果需要修改'),
+                h('p', { className: 'dshwb-hint' }, '重新开启后，这份成果及受影响的后续文档需要重新确认，历史版本保留。'),
+                h('textarea', { className: 'dshwb-input', rows: 2, value: revisionText, onChange: e => setRevisionText(e.target.value), 'aria-label': '成果修改要求', maxLength: 6000 }),
+                h(Button, { disabled: locked || !revisionText.trim(), disabledReason:locked ? lockedReason : '请先填写具体的成果修改要求。', onClick: async () => { if (await mutate({ action: 'revise', stage: selectedStage, text: revisionText })) setRevisionText(''); } }, '提交修改安排')) : null,
+              data.complete ? h('div', { key: 'delivery', className: 'dshpm-proposal' }, h('h3', null, '正式文档交付'),
+                h('p', null, '下载包包含已确认的正式文档和版本清单。代码和运行环境不包含在文档包中。'),
+                h(Button, { disabled: locked, disabledReason:lockedReason, onClick: () => mutate({ action: 'package' }) }, data.delivery ? '重新整理文档包' : '整理交付文档包'),
+                data.delivery ? h(Button, { kind: 'primary', onClick: () => download(data.delivery.path, '项目交付文档.zip') }, '下载交付文档包') : null) : null,
+            ],
+          ]):null;
       return h('div', { className: 'dshpm-page'+(simple?' dshpm-simple':''), 'data-testid': 'personal-manager-page' }, [
         h('style', { key: 'style' }, CSS + MANAGER_CSS),
         h(Toast, { key: 'toast', toast }),
@@ -6100,6 +6179,7 @@ ${text.trim().slice(0, 20_000)}
             h('p', { className: 'dshwb-hint' }, data?.complete ? '本次约定的成果已确认，可以下载文档包。' : task ? MANAGER_JOB_LABELS[task.status] : data?.contract ? `接下来：${MANAGER_STAGE_TITLES[stage] || '了解你的想法'}` : '告诉我想做什么。我会陪你整理想法、准备文档并完成交付。')),
           h('div', { key: 'actions', className: 'dshpm-actions' },[
             h('div',{key:'mode',className:'dshwb-tabGroup','aria-label':'管家显示模式',role:'group'},[['simple','简洁模式'],['full','完整管家']].map(([value,label])=>h('button',{key:value,type:'button','aria-pressed':managerMode===value,onClick:()=>changeManagerMode(value)},label))),
+            h(Button,{key:'help',onClick:()=>window.open('/workbench/guide','_blank','noopener')},'使用手册'),
             h('details',{key:'more',className:'dshpm-more'},h('summary',null,'更多'),
               h(Button, { disabled: busy, disabledReason: '正在处理当前操作，请等待完成后再试。', onClick: selectProject }, '选择项目文件夹'),
               h(Button, { disabled: busy, disabledReason: '正在处理当前操作，请等待完成后再试。', onClick: newProject }, '新建项目'),
@@ -6181,48 +6261,7 @@ ${text.trim().slice(0, 20_000)}
               h('div', { className: 'dshpm-actions' }, h(Button, { type: 'submit', kind: 'primary', disabled: locked || !data.available || !draft.trim(), disabledReason:locked || !data.available ? managerReason : '请先填写想告诉管家的内容。' }, '告诉管家'),
                 !simple ? h(Button, { disabled: locked || !data.available, disabledReason:managerReason, onClick: () => message('请根据本次交付目标，帮我整理第一版安排；信息不足时先问我。') }, '帮我整理第一版'):null)),
           ]),
-          (!simple || simpleResultsOpen) ? h('section', { key: '成果', className: 'dshpm-results', 'aria-label': '我的成果' }, [
-            h('div', { key: 'tabs', className: 'dshwb-tabGroup', role: 'group', 'aria-label': '项目内容' },
-              [['documents', '我的成果'], ['decisions', '等我确认'], ['history', '项目记录']].map(([value, title]) => h('button', { key: value, type: 'button', 'aria-pressed': tab === value, onClick: () => setTab(value) }, title))),
-            tab === 'history' ? h('div', { key: 'history' }, h('h2', null, '项目记录'), h('p', null, `交付目标：${data.contract.goal}`),
-              h('p', { className: 'dshwb-hint' }, '需求文档提供 Word 和 Markdown；其他文档目前提供 Markdown。'),
-              ...data.jobs.map(j => h('article', { key: j.id, className: 'dshpm-record' }, h('strong', null, j.kind === 'conversation' ? '管家沟通' : MANAGER_STAGE_TITLES[j.stage]),
-                h('p', null, MANAGER_JOB_LABELS[j.status]), j.error ? h('p', null, j.error) : null,
-                j.sessionId ? h(Button, { onClick: () => props.openSession(j.sessionId) }, '查看处理记录') : null))) : [
-              h('h2', { key: 'title' }, tab === 'decisions' ? '阅读并确认具体版本' : '文档也是你的正式成果'),
-              data.nextStage && data.nextStage !== selectedStage && outputs.some((o) => o.stage === data.nextStage)
-                ? h('div', { key: 'pendingHint', className: 'dshpm-notice' }, [
-                    h('strong', { key: 'title' }, `待你确认：${MANAGER_STAGE_TITLES[data.nextStage] || data.nextStage}`),
-                    h('p', { key: 'text' }, '这一阶段的文档已经生成，核对后确认即可进入下一阶段。'),
-                    h(Button, { key: 'go', kind: 'primary', onClick: () => setSelectedStage(data.nextStage) }, '去确认'),
-                  ])
-                : null,
-              h('div', { key: 'stages', className: 'dshpm-actions', role: 'group', 'aria-label': '成果分类' },
-                [...new Set([data.nextStage || 'spec', ...outputs.map(o => o.stage)])].map(s => h('button', { key: s, type: 'button', className: 'dshwb-chip', 'aria-pressed': selectedStage === s, onClick: () => setSelectedStage(s) }, MANAGER_STAGE_TITLES[s]))),
-              h(TemplatePanel, { key: 'templates', state, stage: selectedStage, scenario: (data.contract && data.contract.scenario) || 'product', refreshKey: data.revision, showToast, download }),
-              h('div', { key: 'files', className: 'dshpm-files' }, outputs.filter(o => o.stage === selectedStage).map(o => h('article', { key: o.name }, h('strong', null, o.name),
-                h('span', null, o.confirmed ? '已确认版本' : '待审阅'), h(Button, { onClick: () => download(o.name, o.name) }, `下载${o.name.endsWith('.docx') ? ' Word' : ''}`)))),
-              hasDocument ? h('div', { key: `document-${identity}-${selectedStage}`, className: 'dshwb-documentWorkspace dshpm-document' },
-                h(DocumentPane, { state, copy, managerMode: true, stage: selectedStage, localeId: 'zh', docsVersion: data.revision, showToast,
-                  onRefresh: () => setRetry(n => n + 1), onGenerateDocx: () => showToast('需求 Word 会在管家任务完成后从正式原稿生成。'),
-                  onRequestChanges: text => { setDraft(text); showToast('修改意见已放入输入框，确认后告诉管家。'); } })) : h('p', { key: 'empty', className: 'dshpm-empty' }, '正式文档准备好后会出现在这里。你可以先和管家聊聊想法。'),
-              data.nextStage === selectedStage && hasDocument ? h('div', { key: 'approval', className: 'dshpm-approval' }, [
-                h('h3', { key: 'title' }, '确认当前文档版本'),
-                h('p', { key: 'hint', className: 'dshwb-hint' }, '请核对本类全部文档。确认会保存版本快照；以后修改将重新审阅。'),
-                selectedStage === 'build' ? data.buildChecks.map(c => h('label', { key: c.id }, h('input', { type: 'checkbox', checked: checks.includes(c.id), onChange: e => setChecks(v => e.target.checked ? [...v, c.id] : v.filter(x => x !== c.id)) }), c.text)) : null,
-                h('label', { key: 'read' }, h('input', { type: 'checkbox', checked: reviewed, onChange: e => setReviewed(e.target.checked) }), '我已阅读本类文档，并确认当前内容符合需要'),
-                h(Button, { key: 'confirm', kind: 'primary', disabled: locked || !reviewed, disabledReason:locked ? lockedReason : '请先阅读本类文档，并勾选「我已阅读」确认项。', onClick: () => mutate({ action: 'approve', stage: selectedStage, reviewed: true, checks, hashes: selectedHashes }) }, '确认这一版'),
-              ]) : null,
-              hasDocument ? h('details', { key: 'revise', className: 'dshpm-revise' }, h('summary', null, '这份成果需要修改'),
-                h('p', { className: 'dshwb-hint' }, '重新开启后，这份成果及受影响的后续文档需要重新确认，历史版本保留。'),
-                h('textarea', { className: 'dshwb-input', rows: 2, value: revisionText, onChange: e => setRevisionText(e.target.value), 'aria-label': '成果修改要求', maxLength: 6000 }),
-                h(Button, { disabled: locked || !revisionText.trim(), disabledReason:locked ? lockedReason : '请先填写具体的成果修改要求。', onClick: async () => { if (await mutate({ action: 'revise', stage: selectedStage, text: revisionText })) setRevisionText(''); } }, '提交修改安排')) : null,
-              data.complete ? h('div', { key: 'delivery', className: 'dshpm-proposal' }, h('h3', null, '正式文档交付'),
-                h('p', null, '下载包包含已确认的正式文档和版本清单。代码和运行环境不包含在文档包中。'),
-                h(Button, { disabled: locked, disabledReason:lockedReason, onClick: () => mutate({ action: 'package' }) }, data.delivery ? '重新整理文档包' : '整理交付文档包'),
-                data.delivery ? h(Button, { kind: 'primary', onClick: () => download(data.delivery.path, '项目交付文档.zip') }, '下载交付文档包') : null) : null,
-            ],
-          ]):null,
+          h(ManagerResultsSheet,{key:'result-sheet',simple,open:simpleResultsOpen,onClose:()=>setSimpleResultsOpen(false)},results),
         ]) : null,
       ]);
     }
@@ -8099,6 +8138,14 @@ textarea.dshwb-input { resize: vertical; }
 }
 .dshpm-question strong { font-weight: 700; }
 
+.dshpm-reader { border: 1px solid var(--dsw-alias-border-l1); border-radius: 16px; padding: 0; width: min(1080px,calc(100vw - 32px)); max-width: none; max-height: calc(100dvh - 32px); color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-layer-1); }
+.dshpm-reader::backdrop { background: #172b4d66; }
+.dshpm-readerHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 22px; position: sticky; top: 0; z-index: 2; background: var(--dsw-alias-bg-layer-1); border-bottom: 1px solid var(--dsw-alias-border-l1); }
+.dshpm-reader-full { position: static; padding: 0; border: 0; margin: 0; width: 100%; max-width: none; max-height: none; color: inherit; background: transparent; overflow: visible; }
+.dshpm-readingHints { background: var(--dsw-alias-bg-layer-2); border-radius: 10px; padding: 12px 16px; margin: 12px 0; }
+.dshpm-advanced { padding: 12px 0; }
+.dshpm-advanced > summary { cursor: pointer; font-weight: 600; }
+@media(max-width:600px) { .dshpm-reader { width:100vw; max-height:100dvh; height:100dvh; margin:0; border-radius:0; } }
 .dshpm-simple .dshpm-layout { display: flex; flex-direction: column; max-width: 960px; margin: 16px auto; align-items: stretch; }
 .dshpm-simple > .dshpm-actions { max-width: 960px; margin: 0 auto; }
 .dshpm-actionCard { max-width: 960px; margin: 20px auto; padding: 22px; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l1); border-radius: 16px; }
@@ -8179,7 +8226,7 @@ textarea.dshwb-input { resize: vertical; }
 
     return {
       inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],
-      __test: { managerBlocks, MessageMarkdown, ManagerMessage, Button, useToast, disabledToastListeners, supportsManagerPresentation, ManagerActionCard },
+      __test: { managerBlocks, MessageMarkdown, ManagerMessage, Button, useToast, disabledToastListeners, supportsManagerPresentation, ManagerActionCard, ManagerResultsSheet, managerApprovalReason },
 
       apply(ctx) {
         const localeRuntime = ctx.locale;

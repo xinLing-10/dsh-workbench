@@ -16,7 +16,7 @@ async function client(fetcher = async () => { throw new Error('Unexpected reques
     URL, AbortController,
   });
   const source = (await readFile(new URL('../client.js', import.meta.url), 'utf8')).replace(
-    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { supportsManagerPresentation, ManagerActionCard, Button, useToast, disabledToastListeners, workbenchStore, managerBlocks, proposalLines, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
+    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { managerApprovalReason, ManagerResultsSheet, supportsManagerPresentation, ManagerActionCard, Button, useToast, disabledToastListeners, workbenchStore, managerBlocks, proposalLines, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
   assert.ok(source.includes('globalThis.testClient'), 'client test seam inserted');
   vm.runInContext(source, context);
   factory((name) => { if (name === 'react') return React; throw new Error(name); });
@@ -345,4 +345,15 @@ test('action card only forwards the bound read intent and revision',async()=>{
  const card=c.ManagerActionCard({presentation:p,busy:false,onAction:(...args)=>calls.push(args)});
  const nodes=[];const walk=n=>{if(!n || typeof n!=='object')return;nodes.push(n);(n.props?.children || []).flat(Infinity).forEach(walk);};walk(card);
  const button=nodes.find(n=>n.type===c.Button);assert.ok(button);button.props.onClick();assert.equal(calls[0][0].kind,'open_review');assert.equal(calls[0][1],7);
+});
+
+test('simple review retains explicit read, missing-file and implementation-check gates',async()=>{
+ const c=await client();const input={locked:false,lockedReason:'处理中',missing:[],reviewed:true,stage:'build',checks:['one'],buildChecks:[{id:'one'},{id:'two'}]};
+ assert.match(c.managerApprovalReason(input),/实现检查/);assert.match(c.managerApprovalReason({...input,stage:'spec',missing:['原稿.md']}),/原稿/);assert.match(c.managerApprovalReason({...input,stage:'spec',reviewed:false}),/我已阅读/);assert.equal(c.managerApprovalReason({...input,checks:['one','two']}),'');assert.equal(c.managerApprovalReason({...input,locked:true}),'处理中');
+});
+test('reader switches modal presentation without replacing its document subtree',async()=>{
+ const effects=[];const dialog={open:true,modal:false,closed:0,shown:0,matches(){return this.modal;},close(){this.open=false;this.modal=false;this.closed++;},showModal(){this.open=true;this.modal=true;this.shown++;},setAttribute(){this.open=true;}};
+ const c=await client(undefined,{useRef:()=>({current:dialog}),useEffect:fn=>effects.push(fn)});const content={type:'article',props:{children:['草稿评论']}};
+ let tree=c.ManagerResultsSheet({simple:true,open:true,onClose(){},children:content});effects.pop()();assert.equal(dialog.shown,1);assert.ok(tree.props.children.flat().includes(content));
+ tree=c.ManagerResultsSheet({simple:false,open:false,onClose(){},children:content});effects.pop()();assert.equal(dialog.modal,false);assert.equal(dialog.open,true);assert.ok(tree.props.children.flat().includes(content));
 });

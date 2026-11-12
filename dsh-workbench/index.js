@@ -57,6 +57,7 @@ import {
 /** Exact routes contributed by this plugin. */
 const ROUTES = {
   manager: '/workbench/manager',
+  guide: '/workbench/guide',
   state: '/workbench/state',
   artifacts: '/workbench/artifacts',
   templates: '/workbench/templates',
@@ -2177,6 +2178,22 @@ function serializedHandler(ctx, handler) {
   };
 }
 
+/** Serve only the bundled, self-contained guide behind the existing connection fence. */
+function guideHandler(fence) {
+  return async(req,res)=>{
+    if(fence(req,res))return;
+    if(!['GET','HEAD'].includes(req.method)){res.statusCode=405;res.end();return;}
+    try {
+      const bytes=await readFile(new URL('./docs/manager-user-guide.html',import.meta.url));
+      res.setHeader('content-type','text/html; charset=utf-8');
+      res.setHeader('x-content-type-options','nosniff');
+      res.setHeader('cache-control','no-cache');
+      res.setHeader('content-security-policy',"default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'");
+      res.statusCode=200;res.end(req.method==='HEAD'?undefined:bytes);
+    } catch {res.statusCode=503;res.end('使用手册暂不可用，请维护者运行 npm run docs:guide 后重试。');}
+  };
+}
+
 export function apply(ctx) {
   let sessionAdapter = null;
   const registry = () => join(harnessHome(), 'workbench', 'manager-projects.json');
@@ -2218,6 +2235,7 @@ export function apply(ctx) {
     };
     const routes = [
       [ROUTES.manager, managerHandler(webCtx, fence, manager)],
+      [ROUTES.guide, guideHandler(fence)],
       [ROUTES.state, stateHandler(webCtx, fence)],
       [ROUTES.artifacts, artifactsHandler(webCtx, fence)],
       [ROUTES.templates, templatesHandler(webCtx, fence)],
@@ -2245,7 +2263,7 @@ export function apply(ctx) {
 
 /** Exported for host-side tests; not part of the plugin's public contract. */
 export const __test = {
-  managerHandler, exclusiveProject, boardSummary,
+  managerHandler, guideHandler, exclusiveProject, boardSummary,
   knowledgeHandler,
   contextHandler,
   reviewHandler,
