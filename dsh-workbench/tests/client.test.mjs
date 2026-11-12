@@ -16,7 +16,7 @@ async function client(fetcher = async () => { throw new Error('Unexpected reques
     URL, AbortController,
   });
   const source = (await readFile(new URL('../client.js', import.meta.url), 'utf8')).replace(
-    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { Button, useToast, disabledToastListeners, workbenchStore, managerBlocks, proposalLines, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
+    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { supportsManagerPresentation, ManagerActionCard, Button, useToast, disabledToastListeners, workbenchStore, managerBlocks, proposalLines, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
   assert.ok(source.includes('globalThis.testClient'), 'client test seam inserted');
   vm.runInContext(source, context);
   factory((name) => { if (name === 'react') return React; throw new Error(name); });
@@ -335,4 +335,14 @@ test('disabled-action toast subscribes once, refreshes on repeated clicks and cl
   const button=c.Button({disabled:true,disabledReason:'请先填写目标。'});const event={preventDefault(){},stopPropagation(){}};
   button.props.onClick(event);button.props.onClick(event);assert.equal(updates.length,2);assert.equal(updates[1].message,'请先填写目标。');assert.notEqual(updates[0],updates[1]);
   cleanups.forEach(cleanup=>cleanup?.());assert.equal(c.disabledToastListeners.size,0);button.props.onClick(event);assert.equal(updates.length,2);
+});
+
+test('simple mode rejects unknown presentation versions and unsafe action kinds',async()=>{
+ const c=await client();const valid={schemaVersion:1,revision:2,title:'请阅读',description:'说明',blockingReasons:[],primaryAction:{kind:'open_review',label:'查看'},secondaryActions:[]};assert.equal(c.supportsManagerPresentation(valid),true);assert.equal(c.supportsManagerPresentation({...valid,schemaVersion:2}),false);assert.equal(c.supportsManagerPresentation({...valid,primaryAction:{kind:'approve'}}),false);assert.equal(c.supportsManagerPresentation({...valid,secondaryActions:[{kind:'run_shell'}]}),false);
+});
+test('action card only forwards the bound read intent and revision',async()=>{
+ const c=await client();const calls=[];const p={schemaVersion:1,revision:7,phase:'needs_review',title:'请阅读',description:'核对成果',primaryAction:{kind:'open_review',stage:'spec',label:'查看成果'},secondaryActions:[],blockingReasons:[]};
+ const card=c.ManagerActionCard({presentation:p,busy:false,onAction:(...args)=>calls.push(args)});
+ const nodes=[];const walk=n=>{if(!n || typeof n!=='object')return;nodes.push(n);(n.props?.children || []).flat(Infinity).forEach(walk);};walk(card);
+ const button=nodes.find(n=>n.type===c.Button);assert.ok(button);button.props.onClick();assert.equal(calls[0][0].kind,'open_review');assert.equal(calls[0][1],7);
 });

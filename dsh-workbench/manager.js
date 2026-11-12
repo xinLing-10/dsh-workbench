@@ -1,3 +1,4 @@
+import { deriveManagerPresentation } from './manager-presentation.js';
 import { parseReply, prepareBlocks, presentMessage } from './manager-message.js';
 import { randomUUID, createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
@@ -263,9 +264,10 @@ export function createManagerService(deps) {
     const stage = nextStage(doc, state);
     const stages = MANAGER_MODES[doc.contract?.mode]?.stages || [];
     const complete = stages.length > 0 && !stage && !doc.jobs.some(j => ACTIVE.has(j.status) || j.status === 'uncertain');
-    return { ...doc, messages: doc.messages.map(m => presentMessage(m, doc.answers || {})), jobs: doc.jobs.map(({ prompt, ...job }) => ({ ...job, progress: progressOf(job, review) })), nextStage: stage || null, complete, available: !!deps.adapter(), review,
+    const result = { ...doc, messages: doc.messages.map(m => presentMessage(m, doc.answers || {})), jobs: doc.jobs.map(({ prompt, ...job }) => ({ ...job, progress: progressOf(job, review) })), nextStage: stage || null, complete, available: !!deps.adapter(), review,
       buildChecks: state.stageData.build.confirmations,
       outputs: stages.flatMap(s => Object.entries(review.stages[s].hashes).filter(([, hash]) => hash).map(([name, hash]) => ({ name, hash, stage: s, title: TITLES[s], confirmed: state.stageData[s].confirmed }))) };
+    return {...result,presentation:deriveManagerPresentation(result,state)};
   }
   async function mutate(root, id, state, body) {
     const doc = await load(root, id);
