@@ -1,3 +1,4 @@
+import { executionPolicy } from './execution-policy.js';
 import { knowledgeView, updateKnowledge, contextView, buildContext, readContext } from './knowledge.js';
 import { documentReview, updateComment, assertStageReviewed } from './reviews.js';
 import { boardDirectory, DOCUMENT_NAMES, initializeArtifacts, documentPath, reconcileArtifacts, artifactReview, confirmArtifacts, listApprovalHistory, managedPath, atomicJson } from './artifacts.js';
@@ -974,17 +975,18 @@ function boardFile(root, id) {
 
 /** @returns one roster row for a board. */
 function boardSummary(id, state, name) {
-  return {
-    id,
-    name: str(name),
-    flow: state.flow === 'incremental' ? 'incremental' : 'new',
-    round: state.round,
-    stage: STAGES.includes(state.stage) ? state.stage : STAGES[0],
-    confirmed: STAGES.filter((stage) => state.stageData[stage].confirmed).length,
-    stageStarted:
-      STAGES.includes(state.stage) && state.stageData[state.stage].startedAt !== '',
-    updatedAt: state.updatedAt || new Date().toISOString(),
-  };
+  const pending = STAGES.find(stage => !state.stageData[stage].confirmed);
+  const stage = pending || 'ship';
+  const title = str(state.project.name).trim() || str(name).trim() || str(state.project.goal).trim().split('\n')[0].slice(0, 80) || `未命名需求 · 第 ${state.round || 1} 轮`;
+  return { id, name: title, goal: str(state.project.goal).slice(0, 2000),
+    flow: state.flow === 'incremental' ? 'incremental' : 'new', round: state.round,
+    stage, confirmed: STAGES.findIndex(key => !state.stageData[key].confirmed) < 0 ? STAGES.length : STAGES.indexOf(stage),
+    stageStarted: Boolean(state.stageData[stage].startedAt),
+    stages: Object.fromEntries(STAGES.map(key => [key, {
+      confirmed: state.stageData[key].confirmed, needsReview: !!state.stageData[key].needsReview,
+      startedAt: state.stageData[key].startedAt, confirmedAt: state.stageData[key].confirmedAt,
+      sessionId: state.stageSessions?.[key] || (key === 'spec' ? state.specSessionId : state.sessionId) || '',
+    }])), updatedAt: state.updatedAt || new Date().toISOString() };
 }
 
 /** Read the roster, or null when the project has none yet. */
@@ -1042,7 +1044,7 @@ async function saveBoard(root, index, id, state, name) {
   const summary = boardSummary(id, state, name === undefined ? '' : name);
   const existing = index.boards.findIndex((board) => board.id === id);
   if (existing < 0) index.boards.unshift(summary);
-  else index.boards[existing] = { ...summary, name: name === undefined ? index.boards[existing].name : str(name) };
+  else index.boards[existing] = summary;
   index.boards = index.boards.slice(0, MAX_BOARDS);
   await writeBoardIndex(root, index);
   return summary;
@@ -1169,6 +1171,7 @@ function contextHandler(ctx, fence) {
     if (fence(req, res)) return;
     try {
       const root = await projectRoot(ctx, req);
+      if (req.method === 'POST') await executionPolicy(root);
       const index = await ensureBoardIndex(root);
       const { id, state } = await selectedBoard(root, index, req);
       if (req.method === 'GET') {
@@ -1343,7 +1346,14 @@ function boardsHandler(ctx, fence) {
       }
       const index = await ensureBoardIndex(root);
       if (req.method === 'GET') {
-        send(200, { activeId: index.activeId, boards: index.boards });
+        const boards = [];
+        for (const row of index.boards) {
+          const saved = await readBoard(root, row.id);
+          if (!saved) continue;
+          const { state } = await prepareBoard(root, index, row.id, saved);
+          boards.push(boardSummary(row.id, state, row.name));
+        }
+        send(200, { activeId: index.activeId, boards });
         return;
       }
       if (req.method !== 'POST') {
@@ -1596,6 +1606,18 @@ async function writeRequirementIndex(items) {
   await rename(temporary, file);
 }
 
+// Archive mutations span project roots; serialize the read/modify/write as one unit.
+let requirementIndexTail = Promise.resolve();
+function updateRequirementIndex(transform) {
+  const operation = requirementIndexTail.catch(() => {}).then(async () => {
+    const next = transform(await readRequirementIndex());
+    await writeRequirementIndex(next);
+    return next;
+  });
+  requirementIndexTail = operation.catch(() => {});
+  return operation;
+}
+
 /**
  * Project one saved board into its archive row.
  * @param state - sanitized project state.
@@ -1633,13 +1655,11 @@ function requirementEntry(state, root, meta = {}) {
  */
 async function rememberRequirement(state, root, meta = {}) {
   try {
-    const items = await readRequirementIndex();
     const entry = requirementEntry(state, root, meta);
-    const key = `${entry.root}#${entry.boardId}`;
-    const merged = [entry, ...items.filter((item) => `${str(item.root)}#${str(item.boardId)}` !== key)]
+    const key = JSON.stringify([entry.root, entry.boardId]);
+    await updateRequirementIndex(items => [entry, ...items.filter((item) => JSON.stringify([str(item.root), str(item.boardId)]) !== key)]
       .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')))
-      .slice(0, MAX_REQUIREMENTS);
-    await writeRequirementIndex(merged);
+      .slice(0, MAX_REQUIREMENTS));
   } catch (error) {
     /* The archive is a convenience view, not the source of truth. */
   }
@@ -1708,6 +1728,23 @@ function requirementsHandler(ctx, fence) {
         return;
       }
       if (req.method === 'DELETE' || req.method === 'POST') {
+        const body = req.method === 'POST' ? await readJson(req, 128 * 1024) : {};
+        if (!isRecord(body)) return send(400, { error: 'invalid-request' });
+        if (body.action === 'remove-many') {
+          if (!Array.isArray(body.items) || !body.items.length || body.items.length > MAX_REQUIREMENTS ||
+            body.items.some(item => !isRecord(item) || typeof item.root !== 'string' || !isAbsolute(item.root) || item.root.length > 8192 || typeof item.boardId !== 'string' || item.boardId.length > 200)) {
+            return send(400, { error: 'invalid-selection', message: '请选择有效的需求记录，每次最多移除200条。' });
+          }
+          const keys = new Set(body.items.map(item => JSON.stringify([item.root, item.boardId])));
+          let removed = 0;
+          const remaining = await updateRequirementIndex(items => items.filter(item => {
+            const selected = keys.has(JSON.stringify([str(item.root), str(item.boardId)]));
+            if (selected) removed++;
+            return !selected;
+          }));
+          return send(200, { removed, items: await decorateRequirements(remaining) });
+        }
+        if (body.action !== undefined) return send(400, { error: 'unknown-action' });
         let root = '';
         let boardId = '';
         try {
@@ -1718,7 +1755,6 @@ function requirementsHandler(ctx, fence) {
           /* Fall through to the body for POST. */
         }
         if ((root === '' || boardId === '') && req.method === 'POST') {
-          const body = JSON.parse((await readBody(req, 8 * 1024)).toString('utf8'));
           root = root || str(body.root);
           boardId = boardId || str(body.id);
         }
@@ -1726,8 +1762,7 @@ function requirementsHandler(ctx, fence) {
           send(400, { error: 'root-required' });
           return;
         }
-        const items = await readRequirementIndex();
-        await writeRequirementIndex(
+        await updateRequirementIndex(items =>
           items.filter((item) => item.root !== root || (boardId !== '' && str(item.boardId) !== boardId)),
         );
         send(200, { items: await decorateRequirements(await readRequirementIndex()) });
@@ -1958,6 +1993,7 @@ export function apply(ctx) {
 
 /** Exported for host-side tests; not part of the plugin's public contract. */
 export const __test = {
+  boardSummary,
   knowledgeHandler,
   contextHandler,
   reviewHandler,

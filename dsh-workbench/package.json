@@ -1,6 +1,6 @@
 {
   "name": "dsh-workbench",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "private": true,
   "description": "A product development workbench with versioned document review, traceable project knowledge and inspectable stage context",
   "type": "module",
@@ -21,7 +21,8 @@
     "artifacts.js",
     "reviews.js",
     "knowledge.js",
-    "docs/*.md"
+    "docs/*.md",
+    "execution-policy.js"
   ],
   "dsh": {
     "bundle": {
@@ -35,6 +36,6 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check client.js"
+    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check client.js && node --check execution-policy.js"
   }
 }

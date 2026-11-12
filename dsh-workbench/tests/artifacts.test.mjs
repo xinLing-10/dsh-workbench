@@ -568,3 +568,15 @@ test('previously selected references require renewed selection when their conten
   assert.equal(preview.options.find((option) => option.id === reference.id).selected, true);
   assert.equal(preview.options.find((option) => option.id === reference.id).status, 'draft');
 });
+
+
+test('queue summaries use requirement titles and actual pending stage with session details',async()=>{
+ const f=await fixture(); const edited=structuredClone(f.initial);
+ edited.project.name='知识文档筛选';edited.project.goal='按标题和分类查找';
+ edited.stage='ship';edited.stageData.spec.startedAt='2026-11-12T00:00:00Z';edited.stageSessions.spec='source-session';
+ assert.equal((await f.call('state',{method:'PUT',body:edited})).status,200);
+ const roster=await f.call('boards'); const row=roster.json.boards.find(item=>item.id===f.id);
+ assert.equal(row.name,'知识文档筛选');assert.equal(row.stage,'spec');
+ assert.equal(row.goal,'按标题和分类查找');assert.equal(row.stages.spec.sessionId,'source-session');
+ assert.equal(row.stageStarted,true);assert.equal(row.confirmed,0);
+});

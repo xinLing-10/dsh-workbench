@@ -16,7 +16,7 @@ async function client(fetcher = async () => { throw new Error('Unexpected reques
     URL, AbortController,
   });
   const source = (await readFile(new URL('../client.js', import.meta.url), 'utf8')).replace(
-    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { workbenchStore, projectContext, buildStagePrompt, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
+    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { workbenchStore, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
   assert.ok(source.includes('globalThis.testClient'), 'client test seam inserted');
   vm.runInContext(source, context);
   factory((name) => { if (name === 'react') return React; throw new Error(name); });
@@ -133,10 +133,14 @@ test('review feedback includes stable references, version and only unresolved co
 
 test('conversation dock remains a dedicated sibling without document/preview switches', async () => {
   const c = await client();
-  const tree = c.ConversationDock({ copy: c.copyFor('zh'), stage: 'spec', chatPane: 'native-chat', onOpenSession: () => {}, hasSession: true });
+  const tree = c.ConversationDock({ state: { ...state(), round: 2 }, localeId: 'zh', copy: c.copyFor('zh'), stage: 'spec', chatPane: 'native-chat', onOpenSession: () => {}, hasSession: true });
   assert.equal(tree.type, 'aside');
   const text = JSON.stringify(tree);
   assert.match(text, /native-chat/); assert.doesNotMatch(text, /dshwb-dockTabs/);
+  assert.match(text, /当前需求：Example · 第 2 轮/);
+  const switched = c.ConversationDock({ state: { ...state('other-board'), project: { name: '设备分类统计' }, round: 3 }, localeId: 'zh', copy: c.copyFor('zh'), stage: 'build', hasSession: false });
+  assert.match(JSON.stringify(switched), /当前需求：设备分类统计 · 第 3 轮/);
+  assert.doesNotMatch(JSON.stringify(switched), /Example/);
 });
 
 test('diff view exposes change signs, line numbers and truncation notice', async () => {
@@ -233,4 +237,49 @@ test('a JSON context response without prompt content cannot send an incomplete t
   const c = await client(async () => Response.json({ boardId: 'board-one' }));
   c.workbenchStore.adopt(state());
   await assert.rejects(c.sendContextPrompt(async () => assert.fail('must not deliver'), 'task', { stage: 'spec' }), /上下文缺少有效内容/);
+});
+
+
+test('guidance follows the first unconfirmed stage rather than the stage being browsed',async()=>{
+ const c=await client();c.workbenchStore.adopt(state());const value=c.workbenchStore.get();
+ value.stageData.spec.confirmed=true;value.stage='ship';
+ assert.equal(c.stageGuidance(value,'ship',false).current,'design');
+ assert.equal(c.stageGuidance(value,'ship',false).phase,'return');
+ assert.equal(c.stageGuidance(value,'design',false).phase,'start');
+ value.stageData.design.startedAt='2026-11-12T00:00:00Z';
+ assert.equal(c.stageGuidance(value,'design',true).phase,'running');
+ assert.equal(c.stageGuidance(value,'design',false).phase,'review');
+ for(const item of Object.values(value.stageData))item.confirmed=true;
+ assert.equal(c.stageGuidance(value,'ship',false).phase,'complete');
+});
+
+test('every task and modification carries the requirement name and plugin read-only invariant',async()=>{
+ const c=await client();c.workbenchStore.adopt(state());const value=c.workbenchStore.get();
+ assert.equal(c.requirementName(value),'Example');
+ for(const stage of ['spec','design','build','verify','ship']){
+  const prompt=c.buildStagePrompt(value,stage);
+  assert.match(prompt,/Example · 具体工作/);assert.match(prompt,/不得修改工作台插件本体/);
+ }
+ value.project.name='';value.project.goal='按分类查找资料\n详细描述';
+ assert.equal(c.requirementName(value),'按分类查找资料');
+ value.project.goal='';assert.doesNotMatch(c.requirementName(value),/board-one/);
+});
+
+test('each agent queue shows ready and upstream requirements in order without changing stages',async()=>{
+ const c=await client();
+ const boards=[{id:'late',name:'后续需求',round:2,confirmed:1},{id:'first',name:'当前需求',round:1,confirmed:1},{id:'upstream',name:'需求草稿',round:3,confirmed:0},{id:'done',round:1,confirmed:2}];
+ assert.deepEqual(Array.from(c.personaQueue({boards},1),item=>item.id),['first','late','upstream']);
+});
+
+
+test('bulk removal sends explicit board identities including legacy records without root wildcard',async()=>{
+ let request;
+ const c=await client(async(url,options)=>{request={url,options};return Response.json({removed:2,items:[]});});
+ const a={root:'/project/#a',boardId:'one'},b={root:'/project',boardId:'#a#one'};
+ assert.notEqual(c.requirementKey(a),c.requirementKey(b));
+ await c.removeRequirementRecords([a,{root:'/project'}]);
+ assert.equal(request.options.method,'POST');
+ const body=JSON.parse(request.options.body);
+ assert.equal(body.action,'remove-many');assert.equal(body.items[1].boardId,'');
+ assert.deepEqual(body.items[0],a);
 });

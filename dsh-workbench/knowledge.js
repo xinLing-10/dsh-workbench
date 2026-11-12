@@ -1,3 +1,4 @@
+import { executionPolicy } from './execution-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, stat } from 'node:fs/promises';
 import { DOCUMENTS, STAGES, boardDirectory, managedPath, atomicJson, artifactReview } from './artifacts.js';
@@ -321,6 +322,7 @@ export async function contextView(root, id, state, stage) {
 }
 
 export async function buildContext(root, id, state, stage) {
+  const policy = await executionPolicy(root);
   if (!STAGES.includes(stage)) throw new Error('无效阶段');
   if (STAGES.slice(0, STAGES.indexOf(stage)).some((key) => !state.stageData[key].confirmed)) throw new Error('请先确认前序阶段，再启动本阶段');
   const manifest = await prepareContext(root, id, state, stage);
@@ -328,7 +330,7 @@ export async function buildContext(root, id, state, stage) {
   manifest.id = randomUUID(); manifest.createdAt = new Date().toISOString();
   manifest.path = `${boardDirectory(id)}/contexts/${manifest.id}.json`;
   const footer = `\n【上下文记录】${manifest.path}\n未注入正文及被排除资料请查看清单；被排除资料不得自动当作本次任务依据。\n`;
-  manifest.prompt += footer; manifest.chars = manifest.prompt.length; manifest.promptHash = hash(manifest.prompt);
+  manifest.prompt += policy + footer; manifest.chars = manifest.prompt.length; manifest.promptHash = hash(manifest.prompt);
   await mkdir(await managedPath(root, `${boardDirectory(id)}/contexts`), { recursive: true });
   await writeFile(await managedPath(root, manifest.path), JSON.stringify(manifest, null, 2) + '\n', { flag: 'wx' });
   await atomicJson(await managedPath(root, `${boardDirectory(id)}/contexts/latest-${stage}.json`), { id: manifest.id });

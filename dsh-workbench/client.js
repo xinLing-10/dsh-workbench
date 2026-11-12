@@ -364,7 +364,7 @@ window.__ModuleLoader__.load({
         },
         status: {
           todo: 'Not started',
-          started: 'In progress',
+          started: 'Started',
           review: 'Needs review',
           confirmed: 'Confirmed',
           needsReview: 'Needs review',
@@ -640,7 +640,7 @@ window.__ModuleLoader__.load({
           autoNext: 'Start the next queued task automatically',
           autoNextHint: 'When a task is confirmed, the same person picks up the next one in line.',
           empty: 'No boards in this project yet. Fill in the project info and start the requirements stage.',
-          started: 'In progress',
+          started: 'Started',
           pending: 'Not started',
           nextStarted: (label) => `Picked up the next queued task: ${label}.`,
           noTask: 'This person has nothing queued right now.',
@@ -742,7 +742,7 @@ window.__ModuleLoader__.load({
         },
         status: {
           todo: '未开始',
-          started: '进行中',
+          started: '已启动',
           review: '待确认',
           confirmed: '已确认',
           needsReview: '需重新审阅',
@@ -1014,7 +1014,7 @@ window.__ModuleLoader__.load({
           autoNext: '完成后自动接续队列中的下一项',
           autoNextHint: '确认本项后，同一位角色会自动接下一项。',
           empty: '这个项目还没有看板。填好项目信息并开始需求分析。',
-          started: '进行中',
+          started: '已启动',
           pending: '待开始',
           nextStarted: (label) => `已自动接续队列中的下一项：${label}。`,
           noTask: '这位角色当前没有排期任务。',
@@ -1760,12 +1760,17 @@ window.__ModuleLoader__.load({
       return { phase: archive.phase, items: archive.items, refresh };
     }
 
-    /** Drop one archive row; the project files are untouched. */
-    async function removeRequirementRecord(root, boardId) {
-      const query = `root=${encodeURIComponent(root)}${boardId ? `&id=${encodeURIComponent(boardId)}` : ''}`;
-      const response = await apiFetch(`${REQUIREMENTS_URL}?${query}`, { method: 'DELETE' });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return readApiJson(response);
+    function requirementKey(item) { return JSON.stringify([str(item.root), str(item.boardId)]); }
+
+    /** Remove only the exact selected archive rows; project files are never touched. */
+    async function removeRequirementRecords(items) {
+      const response = await apiFetch(REQUIREMENTS_URL, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'remove-many', items: items.map(item => ({ root: item.root, boardId: str(item.boardId) })) }),
+      });
+      const payload = await readApiJson(response, REQUIREMENTS_URL);
+      if (!response.ok) throw new Error(payload.message || `HTTP ${response.status}`);
+      return payload;
     }
 
     /** Read the project's board roster: one row per requirement round. */
@@ -1846,6 +1851,66 @@ window.__ModuleLoader__.load({
       ).length;
     }
 
+    function requirementName(state) {
+      return str(state.project.name).trim() || str(state.project.goal).trim().split('\n')[0].slice(0, 80) || `未命名需求 · 第 ${state.round || 1} 轮`;
+    }
+
+    function stageGuidance(state, viewed, running) {
+      const current = STAGES.find(key => !state.stageData[key].confirmed);
+      if (!current) return { current: 'ship', phase: 'complete' };
+      if (viewed !== current) return { current, phase: 'return' };
+      if (running) return { current, phase: 'running' };
+      const data = state.stageData[current];
+      return { current, phase: data.needsReview ? 'review' : data.startedAt ? 'review' : 'start' };
+    }
+
+    function TaskGuide({ state, stage, running, busy, copy, localeId, onSelect, onStart, onReview, onQueue }) {
+      const en = localeId === 'en';
+      const guide = stageGuidance(state, stage, running);
+      const index = STAGES.indexOf(guide.current);
+      const title = copy.stage[guide.current].title;
+      const labels = en ? {
+        complete: 'All stages confirmed', return: `Return to current stage: ${title}`,
+        running: 'View agent task queue', review: `Review and confirm ${title}`,
+        start: `${index ? 'Start next stage' : 'Start requirement'}: ${title}`,
+      } : {
+        complete: '本需求全部阶段已确认', return: `返回当前阶段：${title}`,
+        running: '查看 Agent 任务队列', review: `审阅并确认${title}`,
+        start: `${index ? '开始下一阶段' : '开始需求'}：${title}`,
+      };
+      const action = () => {
+        if (guide.phase === 'return') onSelect(guide.current);
+        else if (guide.phase === 'start') onStart(guide.current);
+        else if (guide.phase === 'review') onReview(guide.current);
+        else if (guide.phase === 'running') onQueue();
+      };
+      const hint = en ? {
+        start: 'Ready to start. No agent work begins until you choose Start.',
+        review: 'Review the deliverables and confirm this version to unlock the next stage. A finished turn is not approval.',
+        running: 'The agent is working. You can inspect its conversation and tasks.',
+        return: 'You are viewing another stage. Current progress is based on confirmed deliverables.',
+        complete: 'You can review the delivery documents or create another requirement.',
+      } : {
+        start: '前序确认已完成。点击开始后才会安排本阶段工作。',
+        review: '请检查成果并确认这一版，才会解锁下一阶段；Agent 回合结束不等于确认通过。',
+        running: 'Agent 正在处理当前需求，可查看会话与任务详情。',
+        return: '你正在查看其他阶段；实际进度以已确认成果为准。',
+        complete: '可以查看交付成果，或新建下一项需求。',
+      };
+      return h('section', { className: 'dshwb-taskGuide', 'aria-label': en ? 'Current requirement and next action' : '当前需求与下一步' }, [
+        h('div', { key: 'body', className: 'dshwb-taskGuideBody' }, [
+          h('strong', { key: 'name' }, requirementName(state)),
+          h('div', { key: 'current' }, guide.phase === 'complete' ? labels.complete : `${en ? 'Current stage' : '当前阶段'} ${index + 1}/5 · ${title}`),
+          h('p', { key: 'hint' }, hint[guide.phase]),
+        ]),
+        h('div', { key: 'actions', className: 'dshwb-taskGuideActions' }, [
+          guide.phase !== 'complete' ? h(Button, { key: 'primary', kind: 'primary', disabled: !!busy, onClick: action }, labels[guide.phase]) : null,
+          guide.phase === 'review' ? h(Button, { key: 'continue', kind: 'secondary', disabled: !!busy, onClick: () => onStart(guide.current) }, en ? 'Continue this stage' : '继续完善本阶段') : null,
+          h(Button, { key: 'queue', kind: 'secondary', disabled: !!busy, onClick: onQueue }, en ? 'Team & task queues' : '团队与任务队列'),
+        ]),
+      ]);
+    }
+
     /** Round avatar of one persona (artwork; theme tokens are not used here). */
     function PersonaAvatar({ stage, size = 40 }) {
       const persona = STAGE_PERSONAS[stage] || STAGE_PERSONAS.spec;
@@ -1874,12 +1939,13 @@ window.__ModuleLoader__.load({
     }
 
     /** One persona card: who they are, what they hold, and how to reach them. */
-    function PersonaCard({ stage, index, roster, copy, onTalk, onStart, onOpenBoard, activeBoardId }) {
+    function PersonaCard({ stage, index, roster, copy, onTalk, onStart, onOpenBoard, onOpenSession, activeBoardId, localeId }) {
       const queue = personaQueue(roster, index);
       const current = queue.find((board) => board.confirmed === index) || null;
       const waiting = personaWaiting(roster, index, current ? current.id : '');
       const upstream = queue.filter((board) => board.confirmed < index).length;
-      const busy = Boolean(current && current.id === activeBoardId && current.stageStarted);
+      const started = Boolean(current && (current.stages?.[stage]?.startedAt || current.stageStarted));
+      const en = localeId === 'en';
       return h('article', { className: 'dshwb-persona' + (current ? ' dshwb-personaBusy' : '') }, [
         h('header', { key: 'head', className: 'dshwb-personaHead' }, [
           h(PersonaAvatar, { key: 'avatar', stage, size: 42 }),
@@ -1888,23 +1954,47 @@ window.__ModuleLoader__.load({
             h('span', { key: 'role' }, copy.stage[stage].title),
           ]),
           current
-            ? h('span', { key: 'state', className: 'dshwb-personaState' + (busy ? ' dshwb-personaStateBusy' : '') },
-                busy ? copy.team.started : copy.team.pending)
-            : h('span', { key: 'idle', className: 'dshwb-personaState dshwb-personaStateIdle' }, copy.team.idle),
+            ? h('span', { key: 'state', className: 'dshwb-personaState' },
+                started ? copy.status.started : copy.team.pending)
+            : h('span', { key: 'idle', className: 'dshwb-personaState dshwb-personaStateIdle' }, upstream ? copy.team.waiting : copy.team.idle),
         ]),
         h('p', { key: 'intro', className: 'dshwb-personaIntro' }, copy.team.intros[stage]),
         h('div', { key: 'task', className: 'dshwb-personaTask' }, current
           ? [
-              h('span', { key: 'label' }, copy.team.current),
-              h('strong', { key: 'title' }, current.name || current.id),
+              h('span', { key: 'label' }, en ? 'Current requirement' : '当前需求'),
+              h('strong', { key: 'title' }, current.name || (en ? 'Untitled requirement' : '未命名需求')),
               h('span', { key: 'stage' }, copy.stage[stage].title),
             ]
-          : h('span', { key: 'idle', className: 'dshwb-personaIdle' }, copy.team.noTask)),
+          : h('span', { key: 'idle', className: 'dshwb-personaIdle' }, upstream ? (en ? 'Tasks are waiting for upstream confirmation.' : '已有排期任务，等待前序阶段确认。') : copy.team.noTask)),
         h('div', { key: 'queue', className: 'dshwb-personaQueue' }, [
-          h('span', { key: 'label' }, `${copy.team.queue} · ${waiting}`),
+          h('span', { key: 'label' }, `${copy.team.queue} · ${queue.length} · ${en ? 'Unlocked' : '已解锁'} ${waiting + (current ? 1 : 0)}`),
           upstream > 0
             ? h('span', { key: 'wait', className: 'dshwb-personaWait' }, `${copy.team.waiting} · ${upstream}`)
             : null,
+        ]),
+        h('details', { key: 'details', className: 'dshwb-queueDetails' }, [
+          h('summary', { key: 'summary' }, `${en ? 'View task queue' : '查看任务队列'} · ${queue.length}`),
+          queue.length ? h('ol', { key: 'items' }, queue.map((board, position) => {
+            const detail = board.stages?.[stage] || {};
+            const ready = board.confirmed === index;
+            const status = !ready ? (en ? 'Waiting for upstream confirmation' : '等待前序确认')
+              : detail.needsReview ? (en ? 'Needs re-review' : '需要重新审阅')
+              : detail.startedAt ? (en ? 'Started · inspect session for live status' : '已启动 · 实时状态见会话')
+              : (en ? 'Ready to start' : '待开始');
+            return h('li', { key: board.id }, h('details', null, [
+              h('summary', { key: 'name' }, `${board.name || (en ? 'Untitled requirement' : '未命名需求')} · ${status}`),
+              h('p', { key: 'goal' }, board.goal || (en ? 'No requirement description yet.' : '尚未填写需求说明。')),
+              h('p', { key: 'progress' }, `${en ? 'Current stage' : '当前阶段'}：${copy.stage[board.stage]?.title || copy.stage.spec.title} · ${board.confirmed}/5 ${en ? 'confirmed' : '已确认'}`),
+              h('p', { key: 'time' }, `${en ? 'Started at' : '开始时间'}：${formatTime(detail.startedAt, localeId) || '—'}`),
+              h('p', { key: 'id', className: 'dshwb-hint' }, `${en ? 'Internal task ID' : '内部任务 ID'}：${board.id}`),
+              h('p', { key: 'session', className: 'dshwb-hint' }, `${en ? 'Session ID' : '会话 ID'}：${detail.sessionId || '—'}`),
+              h('div', { key: 'actions', className: 'dshwb-personaActions' }, [
+                h(Button, { key: 'view', size: 'xs', onClick: () => onOpenBoard(stage, board.id) }, en ? 'View requirement' : '查看这项需求'),
+                h(Button, { key: 'session', size: 'xs', disabled: !detail.sessionId, onClick: () => onOpenSession(detail.sessionId) }, en ? 'Agent conversation & tasks' : '查看 Agent 会话与任务'),
+                h(Button, { key: 'start', size: 'xs', disabled: !ready || !!detail.startedAt, onClick: () => onStart(stage, board.id) }, en ? 'Start this task' : '开始这项任务'),
+              ]),
+            ]));
+          })) : h('p', { key: 'empty' }, copy.team.noTask),
         ]),
         h('div', { key: 'actions', className: 'dshwb-personaActions' }, [
           h(
@@ -1929,7 +2019,7 @@ window.__ModuleLoader__.load({
     }
 
     /** The team: five personas, each with its own queue. */
-    function TeamPanel({ copy, roster, onTalk, onStart, onOpenBoard, autoNext, onToggleAutoNext, activeBoardId }) {
+    function TeamPanel({ copy, roster, onTalk, onStart, onOpenBoard, onOpenSession, autoNext, onToggleAutoNext, activeBoardId, localeId }) {
       const boards = roster.boards || [];
       return h('section', { className: 'dshwb-team' }, [
         h(SectionHead, {
@@ -1937,6 +2027,7 @@ window.__ModuleLoader__.load({
           icon: 'users',
           title: copy.team.title,
           desc: copy.team.sub,
+          extra: h(Button, { size: 'xs', onClick: roster.refresh }, localeId === 'en' ? 'Refresh queues' : '刷新任务队列'),
         }),
         h('label', { key: 'auto', className: 'dshwb-teamAuto' }, [
           h('input', {
@@ -1968,6 +2059,8 @@ window.__ModuleLoader__.load({
                   onTalk,
                   onStart,
                   onOpenBoard,
+                  onOpenSession,
+                  localeId,
                   activeBoardId,
                 }),
               ),
@@ -2452,7 +2545,7 @@ window.__ModuleLoader__.load({
 
     /** @returns the shared context block for every stage prompt. */
     function projectContext(state) {
-      const name = str(state.project.name).trim() || '未命名项目';
+      const name = requirementName(state);
       const goal = str(state.project.goal).trim() || '（用户尚未填写项目目标）';
       const mode =
         state.flow === 'incremental'
@@ -2463,7 +2556,7 @@ window.__ModuleLoader__.load({
       const storage = directory
         ? `【本轮文档目录】${directory}/documents/\n【文档路径约束】下文与角色设定中所有阶段文档名，都指本轮目录内的同名文件。正式文档与交接摘要只能写入本轮目录；不得读取其他轮次或根目录同名文档代替本轮输入。代码、README 与应用部署文件仍在项目原位置。\n${paths.map((path) => `- ${path} → ${directory}/documents/${path}`).join('\n')}\n`
         : '【文档路径】请先加载看板，获取本轮文档目录。\n';
-      return `【项目】${name}\n【项目目标】${goal}\n${mode}【工作目录】当前项目根目录。\n${storage}`;
+      return `【需求名称】${name}\n【队列任务命名】todo_write 等任务清单的任务标题统一以“${name} · 具体工作”命名；内部 ID 仅用于关联，不得作为面向用户的任务名。\n【工作台插件只读】不得修改工作台插件本体的代码、文档或配置，也不得通过脚本和命令间接改写。遇到插件问题只报告，不能把修复插件当成本需求的编码任务。\n【项目】${name}\n【项目目标】${goal}\n${mode}【工作目录】当前项目根目录。\n${storage}`;
     }
 
     function knowledgeFormat(stage) {
@@ -2926,10 +3019,13 @@ ${text.trim().slice(0, 20_000)}
     }
 
     /** One requirement row in the archive. */
-    function RequirementRow({ item, copy, localeId, onOpen, onOpenSession, onRemove }) {
+    function RequirementRow({ item, copy, localeId, onOpen, onOpenSession, onRemove, selected, onSelect, removing }) {
       const status = requirementStatus(item, copy);
       const missing = item.exists === false;
       return h('li', { className: 'dshwb-reqRow' }, [
+        h('input', { key: 'select', type: 'checkbox', className: 'dshwb-reqCheckbox', checked: selected, disabled: removing,
+          'aria-label': `${localeId === 'en' ? 'Select requirement' : '选择需求'}：${item.name || item.title || item.root}`,
+          onChange: event => onSelect(event.target.checked) }),
         h('div', { key: 'main', className: 'dshwb-reqMain' }, [
           h('div', { key: 'titleRow', className: 'dshwb-reqTitleRow' }, [
             h('strong', { key: 'title', className: 'dshwb-reqTitle' }, item.name || item.title || item.root),
@@ -2979,7 +3075,7 @@ ${text.trim().slice(0, 20_000)}
           ),
           h(
             Button,
-            { key: 'remove', kind: 'ghost', size: 'xs', onClick: () => onRemove(item) },
+            { key: 'remove', kind: 'ghost', size: 'xs', disabled: removing, onClick: () => onRemove(item) },
             copy.requirements.remove,
           ),
         ]),
@@ -2987,8 +3083,27 @@ ${text.trim().slice(0, 20_000)}
     }
 
     /** The cross-project requirement archive. */
-    function RequirementLibrary({ copy, localeId, archive, onOpen, onOpenSession, onRemove, onBack, onRefresh }) {
+    function RequirementLibrary({ copy, localeId, archive, onOpen, onOpenSession, onRemove, onRemoveMany, removing, onBack, onRefresh }) {
       const items = archive.items || [];
+      const en = localeId === 'en';
+      const [selection, setSelection] = React.useState([]);
+      const visibleKeys = new Set(items.map(requirementKey));
+      const selected = new Set(selection.filter(key => visibleKeys.has(key)));
+      const allSelected = items.length > 0 && items.every(item => selected.has(requirementKey(item)));
+      React.useEffect(() => {
+        setSelection(previous => {
+          const next = previous.filter(key => visibleKeys.has(key));
+          return next.length === previous.length ? previous : next;
+        });
+      }, [archive.items]);
+      const selectOne = (item, checked) => setSelection(previous => {
+        const next = new Set(previous); const key = requirementKey(item);
+        if (checked) next.add(key); else next.delete(key);
+        return [...next];
+      });
+      const removeSelected = async () => {
+        if (await onRemoveMany(items.filter(item => selected.has(requirementKey(item))))) setSelection([]);
+      };
       return h(
         Card,
         { className: 'dshwb-reqCard' },
@@ -3007,6 +3122,18 @@ ${text.trim().slice(0, 20_000)}
           h('div', { key: 'bar', className: 'dshwb-reqBar' }, [
             h('span', { key: 'count', className: 'dshwb-reqCount' }, copy.requirements.count(items.length)),
             h(Button, { key: 'back', kind: 'ghost', size: 'xs', onClick: onBack }, copy.requirements.back),
+          ]),
+          h('div', { key: 'selection', className: 'dshwb-reqSelection', role: 'group', 'aria-label': en ? 'Bulk archive actions' : '需求批量操作' }, [
+            h('label', { key: 'all' }, [
+              h('input', { key: 'checkbox', type: 'checkbox', checked: allSelected, disabled: !items.length || removing || archive.phase !== 'ready',
+                ref: element => { if (element) element.indeterminate = selected.size > 0 && !allSelected; },
+                onChange: event => setSelection(event.target.checked ? items.map(requirementKey) : []) }),
+              en ? 'Select all records' : '全选需求',
+            ]),
+            h('span', { key: 'count', role: 'status' }, en ? `${selected.size} selected` : `已选 ${selected.size} 项`),
+            h(Button, { key: 'clear', size: 'xs', kind: 'ghost', disabled: !selected.size || removing, onClick: () => setSelection([]) }, en ? 'Clear selection' : '取消选择'),
+            h(Button, { key: 'delete', size: 'xs', kind: 'secondary', disabled: !selected.size || removing || archive.phase !== 'ready', onClick: removeSelected }, removing ? (en ? 'Removing…' : '正在删除…') : (en ? `Delete selected records (${selected.size})` : `删除选中记录（${selected.size}）`)),
+            h('span', { key: 'hint', className: 'dshwb-hint' }, en ? 'Select all, then delete to remove this list. Project files stay untouched.' : '全选后可删除当前列表全部记录；项目代码、文档和会话均保留。'),
           ]),
           archive.phase === 'error'
             ? h(
@@ -3028,13 +3155,16 @@ ${text.trim().slice(0, 20_000)}
                   { key: 'list', className: 'dshwb-reqList' },
                   items.map((item) =>
                     h(RequirementRow, {
-                      key: item.boardId ? `${item.root}#${item.boardId}` : item.root,
+                      key: requirementKey(item),
                       item,
                       copy,
                       localeId,
                       onOpen,
                       onOpenSession,
                       onRemove,
+                      removing,
+                      selected: selected.has(requirementKey(item)),
+                      onSelect: checked => selectOne(item, checked),
                     }),
                   ),
                 ),
@@ -3255,7 +3385,7 @@ ${text.trim().slice(0, 20_000)}
               ),
               h('span', { key: 'body', className: 'dshwb-stageItemBody' }, [
                 h('strong', { key: 'title' }, copy.stage[stage].short),
-                h('span', { key: 'desc' }, copy.stage[stage].title),
+                h('span', { key: 'desc' }, `${copy.stage[stage].title} · ${copy.status[status] || copy.status.todo}`),
               ]),
               h('span', { key: 'dot', className: `dshwb-railDot dshwb-railDot-${status}` }),
             );
@@ -5191,7 +5321,7 @@ ${text.trim().slice(0, 20_000)}
       ]);
     }
 
-    function WorkspaceDrawer({ open, onClose, title, children }) {
+    function WorkspaceDrawer({ open, onClose, title, children, busy = false }) {
       const ref = React.useRef(null);
       React.useEffect(() => {
         if (open && ref.current && !ref.current.open) ref.current.showModal();
@@ -5199,17 +5329,25 @@ ${text.trim().slice(0, 20_000)}
       }, [open]);
       return h('dialog', { ref, className: 'dshwb-settingsDrawer', onClose,
         onCancel: (event) => { event.preventDefault(); onClose(); } }, [
-        h('header', { key: 'header' }, h('h2', null, title), h('button', { type: 'button', className: 'dshwb-chatOpen', onClick: onClose, 'aria-label': title + ' · close / 关闭' }, '×')),
+        h('header', { key: 'header' }, h('h2', null, title), h('button', { type: 'button', className: 'dshwb-chatOpen', disabled: busy, onClick: onClose, 'aria-label': title + ' · close / 关闭' }, '×')),
         h('div', { key: 'content', className: 'dshwb-settingsContent' }, children),
       ]);
     }
 
-    function ConversationDock({ copy, stage, chatPane, onOpenSession, hasSession }) {
+    function ConversationDock({ state, copy, localeId, stage, chatPane, onOpenSession, hasSession }) {
+      const name = requirementName(state);
+      const requirement = localeId === 'en' ? `Current requirement: ${name} · Round ${state.round || 1}` : `当前需求：${name} · 第 ${state.round || 1} 轮`;
       return h('aside', { className: 'dshwb-dock', 'aria-label': copy.chat.tab },
         h('div', { className: 'dshwb-chatPane' }, [
           h('div', { key: 'head', className: 'dshwb-chatHead' }, [
-            h('span', { key: 'role', className: 'dshwb-chatScope' }, copy.team.roles[stage]),
-            h('span', { key: 'hint', className: 'dshwb-chatHint' }, copy.chat.tab),
+            h('div', { key: 'context', className: 'dshwb-chatContext' }, [
+              h('div', { key: 'role', className: 'dshwb-chatRole' }, [
+                h('span', { key: 'scope', className: 'dshwb-chatScope' }, copy.team.roles[stage]),
+                h('span', { key: 'hint', className: 'dshwb-chatHint' }, copy.chat.tab),
+              ]),
+              h('span', { key: 'requirement', className: 'dshwb-chatRequirement', title: requirement,
+                'data-testid': 'chat-requirement', 'aria-live': 'polite' }, requirement),
+            ]),
             h('button', { key: 'open', type: 'button', className: 'dshwb-chatOpen', onClick: onOpenSession, disabled: !hasSession }, copy.chat.openFullShort),
           ]),
           h('div', { key: 'body', className: 'dshwb-chatMount' }, chatPane),
@@ -5555,9 +5693,13 @@ ${text.trim().slice(0, 20_000)}
       const running = liveSession ? liveSession.running === true : fallbackRunning;
       const suggestedRoot = useSuggestedRoot(props.useSessions);
       const archive = useRequirementIndex();
-      const roster = useBoardRoster(0);
-      const [autoNext, setAutoNext] = React.useState(true);
+      const roster = useBoardRoster(`${meta.projectRoot}:${state.boardId}:${state.stateRevision}:${docsVersion}`);
+      const [autoNext, setAutoNext] = React.useState(false);
       const [panel, setPanel] = React.useState('board');
+      const [removingRecords, setRemovingRecords] = React.useState(false);
+      const removingRecordsRef = React.useRef(false);
+      const [deleteRequest, setDeleteRequest] = React.useState(null);
+      const deleteRequestRef = React.useRef(null);
       const confirmedCount = STAGES.filter((key) => state.stageData[key].confirmed).length;
 
       // The moment the agent finishes a turn is when its deliverables become
@@ -5820,11 +5962,12 @@ ${text.trim().slice(0, 20_000)}
        */
       const openPersonaTask = async (personaStage, options = {}) => {
         const index = STAGES.indexOf(personaStage);
-        const board = personaCurrent(roster, index);
+        const board = options.boardId ? roster.boards.find(item => item.id === options.boardId) : personaCurrent(roster, index);
         if (!board) {
           showToast(copy.team.noTask, 'info');
           return;
         }
+        if (options.start && board.confirmed !== index) { showToast(localeId === 'en' ? 'Confirm upstream stages first.' : '请先确认前序阶段，不能跳过阶段启动任务。', 'error'); return; }
         if (busy !== '') return;
         setBusy('persona');
         try {
@@ -5832,7 +5975,7 @@ ${text.trim().slice(0, 20_000)}
           if (board.id !== activeId) {
             await activateBoard(board.id);
           }
-          if (board.stage === personaStage) store.setStage(personaStage);
+          store.setStage(personaStage);
           setPanel('board');
           // Conversation stays visible for every workspace mode.
           if (options.start && !board.stageStarted) {
@@ -5908,18 +6051,31 @@ ${text.trim().slice(0, 20_000)}
         props.openSession(id);
       };
 
-      const removeRequirement = async (item) => {
-        const label = item.name || item.title || item.root;
-        const question = `${copy.requirements.removeConfirm}\n\n${label}\n${item.root}`;
-        if (typeof window !== 'undefined' && !window.confirm(question)) return;
+      const finishDeleteRequest = (result) => {
+        const request = deleteRequestRef.current;
+        deleteRequestRef.current = null; setDeleteRequest(null);
+        request?.resolve(result);
+      };
+      const requestRemoveRequirements = (items) => new Promise(resolve => {
+        if (!items.length || removingRecordsRef.current || deleteRequestRef.current) { resolve(false); return; }
+        const request = { items: [...items], resolve };
+        deleteRequestRef.current = request; setDeleteRequest(request);
+      });
+      const confirmRemoveRequirements = async () => {
+        const request = deleteRequestRef.current;
+        if (!request || removingRecordsRef.current) return;
+        removingRecordsRef.current = true; setRemovingRecords(true);
         try {
-          await removeRequirementRecord(item.root, item.boardId);
+          const result = await removeRequirementRecords(request.items);
           archive.refresh();
-          showToast(copy.requirements.removed, 'success');
+          showToast(localeId === 'en' ? `${result.removed} record(s) removed.` : `已删除 ${result.removed} 条需求档案记录。`, 'success');
+          finishDeleteRequest(true);
         } catch (error) {
           showToast(String(error.message || error), 'error');
-        }
+          finishDeleteRequest(false);
+        } finally { removingRecordsRef.current = false; setRemovingRecords(false); }
       };
+      const removeRequirement = item => requestRemoveRequirements([item]);
 
       const stageBody = (() => {
         const common = {
@@ -5957,6 +6113,21 @@ ${text.trim().slice(0, 20_000)}
         [
           h('style', { key: 'css' }, CSS),
           h(Toast, { key: 'toast', toast }),
+          h(WorkspaceDrawer, { key: 'delete-confirmation', open: !!deleteRequest, busy: removingRecords,
+            title: localeId === 'en' ? 'Confirm requirement record deletion' : '确认删除需求记录',
+            onClose: () => { if (!removingRecordsRef.current) finishDeleteRequest(false); } }, [
+            h('p', { key: 'scope' }, localeId === 'en'
+              ? `Remove these ${deleteRequest?.items.length || 0} records from the archive? Project code, documents and sessions stay untouched.`
+              : `确定从需求档案删除以下 ${deleteRequest?.items.length || 0} 条记录？项目代码、文档和会话均保留。`),
+            h('ul', { key: 'items', className: 'dshwb-reqDeleteList' }, (deleteRequest?.items || []).map(item =>
+              h('li', { key: requirementKey(item) }, h('strong', null, item.name || item.title || item.root), h('code', null, item.root)))),
+            h('div', { key: 'actions', className: 'dshwb-personaActions' }, [
+              h(Button, { key: 'cancel', disabled: removingRecords, onClick: () => finishDeleteRequest(false) }, localeId === 'en' ? 'Cancel' : '取消'),
+              h(Button, { key: 'confirm', kind: 'primary', disabled: removingRecords, onClick: confirmRemoveRequirements }, removingRecords
+                ? (localeId === 'en' ? 'Removing…' : '正在删除…')
+                : (localeId === 'en' ? `Confirm deletion of ${deleteRequest?.items.length || 0} records` : `确认删除 ${deleteRequest?.items.length || 0} 条记录`)),
+            ]),
+          ]),
           dragging ? h('div', { key: 'dragShield', className: 'dshwb-dragShield' }) : null,
           h(
             'header',
@@ -6068,6 +6239,11 @@ ${text.trim().slice(0, 20_000)}
               h(
                 'div',
                 { key: 'content', className: 'dshwb-content' },
+                h(TaskGuide, { key: 'guide', state, stage, running, busy, copy, localeId,
+                  onSelect: target => { store.setStage(target); setPanel('board'); },
+                  onStart: target => { store.setStage(target); setPanel('board'); start(target); },
+                  onReview: target => { store.setStage(target); setPanel('board'); setSettingsOpen(true); },
+                  onQueue: () => { roster.refresh(); setPanel('team'); } }),
                 panel === 'team'
                   ? h(TeamPanel, {
                       copy,
@@ -6075,9 +6251,11 @@ ${text.trim().slice(0, 20_000)}
                       autoNext,
                       onToggleAutoNext: setAutoNext,
                       activeBoardId: str(state.boardId),
-                      onTalk: (personaStage) => openPersonaTask(personaStage),
-                      onStart: (personaStage) => openPersonaTask(personaStage, { start: true }),
-                      onOpenBoard: (personaStage) => openPersonaTask(personaStage, { chat: false }),
+                      localeId,
+                      onOpenSession: props.openSession,
+                      onTalk: (personaStage, boardId) => openPersonaTask(personaStage, { boardId }),
+                      onStart: (personaStage, boardId) => openPersonaTask(personaStage, { start: true, boardId }),
+                      onOpenBoard: (personaStage, boardId) => openPersonaTask(personaStage, { chat: false, boardId }),
                     })
                   : panel === 'requirements'
                   ? h(RequirementLibrary, {
@@ -6088,6 +6266,8 @@ ${text.trim().slice(0, 20_000)}
                       onOpen: openRequirement,
                       onOpenSession: openRequirementSession,
                       onRemove: removeRequirement,
+                      onRemoveMany: requestRemoveRequirements,
+                      removing: removingRecords,
                       onBack: () => setPanel('board'),
                       onRefresh: archive.refresh,
                     })
@@ -6105,7 +6285,7 @@ ${text.trim().slice(0, 20_000)}
                           h('button', { type: 'button', 'aria-pressed': dockTab === 'preview', onClick: () => setDockTab('preview') }, localeId === 'en' ? 'Run & verify' : '运行验收'),
                           h('button', { type: 'button', 'aria-pressed': dockTab === 'knowledge', onClick: () => setDockTab('knowledge') }, localeId === 'en' ? 'Project knowledge' : '项目知识')),
                         h(Button, { key: 'settings', size: 'xs', onClick: () => setSettingsOpen(true) }, localeId === 'en' ? 'Stage settings & approval' : '阶段设置与确认'),
-                        h(Button, { key: 'start', size: 'xs', kind: 'primary', disabled: busy !== '' || running,
+                        h(Button, { key: 'start', size: 'xs', kind: 'primary', disabled: busy !== '' || running || isLocked(state, stage),
                           onClick: () => start(stage) }, localeId === 'en' ? 'Start / continue' : '开始 / 继续'),
                       ]),
                       meta.phase === 'offline' ? h('p', { key: 'offline', role: 'alert', className: 'dshwb-banner dshwb-bannerWarn' }, copy.loadFailed) : null,
@@ -6131,6 +6311,7 @@ ${text.trim().slice(0, 20_000)}
               h(ConversationDock, {
                 key: 'dock',
                 state,
+                localeId,
                 copy,
                 stage,
                 docsVersion,
@@ -6410,7 +6591,7 @@ ${text.trim().slice(0, 20_000)}
 }
 .dshwb-teamAutoText { font-weight: 560; }
 .dshwb-teamAutoHint { color: var(--dsw-alias-label-caption); }
-.dshwb-teamGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.dshwb-teamGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 10px; align-items: start; }
 .dshwb-persona {
   display: flex;
   flex-direction: column;
@@ -6440,6 +6621,16 @@ ${text.trim().slice(0, 20_000)}
 .dshwb-personaTask { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; padding: 7px 9px; border-radius: 8px; background: var(--dsw-alias-bg-base); font-size: 10.5px; color: var(--dsw-alias-label-secondary); }
 .dshwb-personaTask strong { color: var(--dsw-alias-label-primary); font-size: 11.5px; }
 .dshwb-personaIdle { color: var(--dsw-alias-label-caption); }
+.dshwb-taskGuide { position:sticky; top:8px; z-index:8; display:flex; flex-wrap:wrap; gap:16px; justify-content:space-between; align-items:center; border:1px solid var(--dsw-alias-border-l1); border-left:4px solid #597ef7; border-radius:12px; padding:16px; margin-bottom:18px; background:var(--dsw-alias-bg-base); }
+.dshwb-taskGuideBody { flex:1 1 240px; min-width:0; overflow-wrap:anywhere; }
+.dshwb-taskGuideBody strong { display:block; font-size:16px; margin-bottom:6px; }
+.dshwb-taskGuideBody p { margin:6px 0 0; font-size:12px; opacity:.75; }
+.dshwb-taskGuideActions { display:flex; flex-wrap:wrap; gap:8px; }
+.dshwb-queueDetails { margin:12px 0; font-size:12px; overflow-wrap:anywhere; }
+.dshwb-queueDetails summary { cursor:pointer; padding:8px 0; line-height:1.6; }
+.dshwb-queueDetails ol { margin:0; padding-left:16px; max-height:420px; overflow:auto; }
+.dshwb-queueDetails li { padding:6px; border-top:1px solid var(--dsw-alias-border-l1); }
+.dshwb-queueDetails p { margin:6px 0; }
 .dshwb-personaQueue { display: flex; flex-wrap: wrap; gap: 8px; font-size: 9.5px; color: var(--dsw-alias-label-caption); }
 .dshwb-personaWait { color: var(--dsw-alias-state-warn-primary); }
 .dshwb-personaActions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; }
@@ -6600,6 +6791,9 @@ ${text.trim().slice(0, 20_000)}
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-1);
 }
+.dshwb-chatContext { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.dshwb-chatRole { display: flex; align-items: center; gap: 8px; }
+.dshwb-chatRequirement { max-width: 100%; padding: 3px 8px; border-radius: 7px; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; white-space: normal; color: var(--dsw-alias-state-business-primary); background: var(--dsw-alias-state-business-tertiary); }
 .dshwb-chatHint { flex: 1; min-width: 0; font-size: 10px; line-height: 1.45; color: var(--dsw-alias-label-caption); }
 .dshwb-chatScope {
   flex: none;
@@ -6682,6 +6876,13 @@ ${text.trim().slice(0, 20_000)}
 .dshwb-docEmpty code { max-width: 100%; padding: 3px 7px; border-radius: 5px; background: var(--dsw-alias-bg-layer-2); font-size: 10px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; }
 .dshwb-docEmptyError { color: var(--dsw-alias-state-error-primary); }
 .dshwb-reqCard { min-height: 320px; }
+.dshwb-reqDeleteList { max-height:55dvh; overflow:auto; padding-left:20px; }
+.dshwb-reqDeleteList li { margin:12px 0; }
+.dshwb-reqDeleteList code { display:block; overflow-wrap:anywhere; font-size:11px; opacity:.7; margin-top:4px; }
+.dshwb-reqSelection { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 0 12px; padding:10px; border:1px solid var(--dsw-alias-border-l1); border-radius:9px; }
+.dshwb-reqSelection label { display:inline-flex; align-items:center; gap:6px; font-size:12px; cursor:pointer; }
+.dshwb-reqSelection .dshwb-hint { flex-basis:100%; }
+.dshwb-reqCheckbox { flex:none; align-self:flex-start; margin-top:4px; cursor:pointer; }
 .dshwb-reqBar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; }
 .dshwb-reqCount { font-size: 10.5px; color: var(--dsw-alias-label-caption); }
 .dshwb-reqList { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
@@ -7036,7 +7237,8 @@ textarea.dshwb-input { resize: vertical; }
 }
 @media (max-width: 700px) {
   .dshwb-fieldGrid, .dshwb-deployGrid { grid-template-columns: minmax(0, 1fr); }
-  .dshwb-reqRow { flex-direction: column; }
+  .dshwb-reqRow { flex-wrap: wrap; }
+  .dshwb-reqMain { flex:1 1 220px; min-width:0; }
   .dshwb-reqActions { flex-direction: row; flex-wrap: wrap; }
   .dshwb-planGrid, .dshwb-planCompare { grid-template-columns: minmax(0, 1fr); }
   .dshwb-viewStage { grid-template-columns: minmax(0, 1fr); }
@@ -7182,17 +7384,14 @@ textarea.dshwb-input { resize: vertical; }
          */
         const createSession = async (stage) => {
           const meta = workbenchStore.getMeta();
-          const base = meta.projectRoot ? { cwd: meta.projectRoot } : {};
+          if (!meta.projectRoot) throw new Error('请先选择独立的业务项目目录，再启动任务。');
+          const base = { cwd: meta.projectRoot };
           const preset = STAGE_PRESETS[stage];
           let id;
           try {
             id = await ctx.sessions.create(preset ? { ...base, agentPreset: preset } : base);
           } catch (error) {
-            try {
-              id = await ctx.sessions.create(base);
-            } catch (fallbackError) {
-              id = await ctx.sessions.create({});
-            }
+            id = await ctx.sessions.create(base);
           }
           workbenchStore.setStageSession(stage, id);
           return id;
@@ -7201,10 +7400,10 @@ textarea.dshwb-input { resize: vertical; }
         const sendTo = async (id, text, mode, justCreated, stage) => {
           await ctx.sessions.using(id, { source: 'dsh-workbench' }, async (reference) => {
             await reference.ready;
-            if (justCreated) {
-              const name = workbenchStore.get().project.name || '工作台';
+            {
+              const name = requirementName(workbenchStore.get());
               const prefix = copyNow().stage[stage] ? copyNow().stage[stage].short : '工作台';
-              await reference.binding.session.rename(`${prefix} · ${name}`.slice(0, 80)).catch(() => {});
+              await reference.binding.session.rename(`${name} · ${prefix}`.slice(0, 180)).catch(() => {});
             }
             const result = await reference.binding.session.prompt([{ type: 'text', text }], mode);
             if (!result.ok) {
