@@ -288,3 +288,19 @@ test('manager explanations receive actual versioned documents with bounded conve
   doc.messages = Array.from({ length: 20 }, () => ({ role: 'user', text: 'x'.repeat(8000) }));
   assert.ok(managerPrompt(doc, f.state, 'hello').length < 28000);
 });
+
+test('structured questions can be answered once, persist answers and never dispatch work automatically',async()=>{
+  const f=await fixture();await setup(f);await f.call({action:'message',text:'开始沟通'});await f.service().tick();
+  await f.finish(JSON.stringify({version:2,blocks:[{type:'summary',text:'需要补充一点信息'},{type:'question',text:'服务对象是谁？',options:['门店','个人']}],proposal:null}));
+  let view=await f.view();const question=view.messages.at(-1).blocks.find(b=>b.type==='question');assert.ok(question.id);
+  await f.call({action:'answer',questionId:question.id,text:'门店'});await f.service().tick();
+  await f.finish(JSON.stringify({version:2,blocks:[{type:'summary',text:'收到'},{type:'question',text:'服务对象是谁？'}],proposal:null}));
+  view=await f.view();assert.equal(view.messages.find(m=>m.blocks?.some(b=>b.id===question.id)).blocks.find(b=>b.id===question.id).answer,'门店');
+  assert.ok(!view.messages.at(-1).blocks.some(b=>b.type==='question'));assert.equal(view.jobs.filter(j=>j.kind==='work').length,0);
+  await assert.rejects(f.call({action:'answer',questionId:question.id,text:'重复回答'}),/已回答/);
+  await f.restart();assert.equal((await f.view()).answers[question.id].text,'门店');
+});
+test('malformed manager JSON fails cleanly without leaking output or dispatching',async()=>{
+  const f=await fixture();await setup(f);await f.call({action:'message',text:'准备'});await f.service().tick();await f.finish('{"version":2,"blocks":');
+  const view=await f.view();assert.equal(view.jobs.at(-1).status,'failed');assert.equal(view.proposal,null);assert.ok(!view.messages.at(-1).text.includes('"blocks":'));
+});

@@ -2,9 +2,12 @@
 /*
 !/.gitignore
 !/README.md
+!/AGENTS.md
 !/dsh-workbench/
 !/spec-analyst-preset/
 !/stage-presets/
+!/deploy/
+!/.dockerignore
 
 **/.DS_Store
 **/node_modules/
@@ -15,3 +18,7 @@
 **/*.log
 **/*.pem
 **/*.key
+
+**/__pycache__/
+/deploy/instances/
+/deploy/backups/

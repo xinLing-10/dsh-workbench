@@ -1,3 +1,5 @@
+import { pdfFont } from './delivery-export.js';
+import { approvedSources, sha256 } from './delivery-plan.js';
 import { createManagerService } from './manager.js';
 import { createSessionAdapter } from './manager-adapter.js';
 import { executionPolicy } from './execution-policy.js';
@@ -29,12 +31,35 @@ import { mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promi
 import { homedir } from 'node:os';
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
+import {
+  EXTRA_DOCUMENTS,
+  sourcesFor,
+  SCENARIOS,
+  TEMPLATE_STAGES,
+  gateStageFor,
+  DELIVERY_TITLES,
+  fillDocxTemplate,
+  findSoffice,
+  hasPlaceholders,
+  splitMarkdownSections,
+  templateDirectory,
+  listDeliverables,
+  listTemplates,
+  renderDeliverable,
+  saveUploadedTemplate,
+  selectTemplate,
+  confirmTemplate,
+  deleteTemplate,
+  templateFor,
+  composeDeliverable,
+} from './templates.js';
 
 /** Exact routes contributed by this plugin. */
 const ROUTES = {
   manager: '/workbench/manager',
   state: '/workbench/state',
   artifacts: '/workbench/artifacts',
+  templates: '/workbench/templates',
   review: '/workbench/review',
   knowledge: '/workbench/knowledge',
   context: '/workbench/context',
@@ -67,6 +92,7 @@ const LIBRARY_EXTENSIONS = new Set(['.md', '.markdown', '.mdx', '.docx', '.pdf',
 /** Original-byte response types; anything else is served as an opaque download. */
 const RAW_CONTENT_TYPES = {
   '.zip': 'application/zip',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   '.pdf': 'application/pdf',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.md': 'text/markdown; charset=utf-8',
@@ -81,6 +107,7 @@ const RAW_CONTENT_TYPES = {
   '.webp': 'image/webp',
   '.gif': 'image/gif',
   '.svg': 'image/svg+xml',
+  '.html': 'text/html; charset=utf-8',
 };
 
 /** Text extensions the preview route will return as UTF-8. */
@@ -669,6 +696,16 @@ function crc32(buffer) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
+/** @returns the body paragraphs of a generated DOCX, for template filling. */
+function docxBodyXml(markdown) {
+  const bytes = buildDocx(markdown, '交付文档');
+  const xml = readZipEntry(bytes, 'word/document.xml').toString('utf8');
+  const start = xml.indexOf('<w:body>');
+  const end = xml.lastIndexOf('<w:sectPr');
+  if (start < 0) return '';
+  return xml.slice(start + 8, end > 0 ? end : xml.length);
+}
+
 /** @returns the current time encoded as MS-DOS date and time words. */
 function dosDateTime() {
   const now = new Date();
@@ -1225,6 +1262,168 @@ function reviewHandler(ctx, fence) {
       send(200, { ok: true, boardId: id });
     } catch (error) {
       send(error.code === 'ENOENT' ? 404 : 409, { error: 'document-review-failed', message: String(error.message || error) });
+    }
+  };
+}
+
+/**
+ * Delivery templates: list, upload, select, confirm, delete, render.
+ *
+ * The template layer sits on top of the confirmed Markdown; it never changes
+ * what the agents exchanged or what the stage gate checked.
+ */
+function templatesHandler(ctx, fence) {
+  return async (req, res) => {
+    const send = responder(res);
+    if (fence(req, res)) return;
+    try {
+      const root = await projectRoot(ctx, req);
+      const index = await ensureBoardIndex(root);
+      const { id, state } = await selectedBoard(root, index, req);
+      if (req.method === 'GET') {
+        const list = await listTemplates(root, id);
+        const delivery = {};
+        for (const stage of TEMPLATE_STAGES) delivery[stage] = await listDeliverables(root, id, stage);
+        send(200, { ...list, delivery, pdfSupport: findSoffice() !== null || Boolean(pdfFont()), scenarios: SCENARIOS, extras: EXTRA_DOCUMENTS });
+        return;
+      }
+      if (req.method !== 'POST') {
+        send(405, { error: 'method-not-allowed' });
+        return;
+      }
+      const body = await readJson(req, 16 * 1024 * 1024);
+      const action = str(body.action);
+      if (action === 'upload') {
+        const bytes = Buffer.from(str(body.data), 'base64');
+        const row = await saveUploadedTemplate(root, id, { stage: body.stage, name: body.name, bytes }, { docxText: readDocxText });
+        send(200, { template: row, ...(await listTemplates(root, id)) });
+        return;
+      }
+      if (action === 'select') {
+        send(200, await selectTemplate(root, id, { stage: body.stage, template: str(body.template) }));
+        return;
+      }
+      if (action === 'confirm') {
+        send(200, await confirmTemplate(root, id, { stage: body.stage, template: str(body.template) }));
+        return;
+      }
+      if (action === 'delete') {
+        send(200, await deleteTemplate(root, id, { stage: body.stage, template: str(body.template) }));
+        return;
+      }
+      if (action === 'preview') {
+        const stage = TEMPLATE_STAGES.includes(body.stage) ? body.stage : '';
+        if (stage === '') throw new Error('无效的阶段');
+        const template = (await listTemplates(root, id)).stages[stage].find((row) => row.id === str(body.template));
+        if (template === undefined) throw new Error('模板不存在');
+        const composed = composeDeliverable({
+          stage,
+          template,
+          documentText: '',
+          knowledgeNodes: [],
+          projectName: state.project.name,
+          date: new Date().toISOString().slice(0, 10),
+          preview: true,
+        });
+        send(200, {
+          title: composed.title,
+          markdown: composed.markdown,
+          sourceText: str(template.text || '').slice(0, 4000),
+        });
+        return;
+      }
+      if (action === 'render' || action === 'preflight') {
+        const stage = TEMPLATE_STAGES.includes(body.stage) ? body.stage : '';
+        if (stage === '') throw new Error('无效的阶段');
+        const gateStage = gateStageFor(stage);
+        const gate = state.stageData[gateStage].confirmed;
+        if (!gate) {
+          throw new Error(
+            gateStage === stage
+              ? '请先确认该阶段文档，再按模板生成交付件'
+              : `请先确认${DELIVERY_TITLES[gateStage] || '前置文档'}，再生成${DELIVERY_TITLES[stage] || '该文档'}`,
+          );
+        }
+        const template = await templateFor(root, id, stage);
+        if(!template.confirmed)throw new Error('请先确认当前选择的模板');
+        const {sources,missing:missingSources}=await approvedSources(root,id,state,sourcesFor(stage));
+        const text = sources.map((source) => source.text).join('\n\n');
+        const today = new Date().toISOString().slice(0, 10);
+        const composed = composeDeliverable({
+          stage,
+          template,
+          documentTexts: sources, strict:true, mappings:body.mappings && typeof body.mappings==='object'?body.mappings:{},
+          knowledgeNodes: [], // Only approved snapshots can fill a formal delivery.
+          projectName: state.project.name,
+          date: today,
+        });
+        let docxBytes;
+        let mode = 'structure';
+        const missingFields = [];
+        if (template.kind === 'uploaded' && template.ext === 'docx' && hasPlaceholders(template.text)) {
+          const file = await managedPath(root, `${templateDirectory(id, stage)}/${template.id}.${template.ext}`);
+          const source = await readFile(file);
+          if(sha256(source)!==template.hash)throw new Error('上传模板已变化，请重新上传并确认');
+          const grouped=new Map();
+          for(const source of sources)for(const [heading,body] of splitMarkdownSections(source.text)) {
+            const entries=grouped.get(heading) || [];entries.push({id:source.name+'::'+heading,body});grouped.set(heading,entries);
+          }
+          const sections=new Map([...grouped].filter(([,rows])=>rows.length===1).map(([key,rows])=>[key,rows[0].body]));
+          for(const binding of composed.sourceMap) {
+            if(!binding.source)continue;
+            const entry=[...grouped.values()].flat().find(row=>row.id===binding.source);
+            if(entry)sections.set(binding.section,entry.body);
+          }
+
+          const filled = fillDocxTemplate(
+            source,
+            {
+              fields: {
+                项目名: state.project.name || '（未命名项目）',
+                日期: composed.markdown.match(/^> 日期：(.+)$/m)?.[1] || today,
+                文档名: composed.title,
+                标题: state.project.name || composed.title,
+              },
+              sections,
+              whole: text,
+            },
+            { bodyXml: docxBodyXml, zip: zipStored },
+          );
+          docxBytes = filled.bytes;
+          mode = 'docx-template';
+          missingFields.push(...filled.missing);
+        }
+        const gaps=[...composed.gaps,...missingSources.map(name=>({section:name,reason:'来源尚未确认或版本已变化'})),...missingFields.map(section=>({section,reason:'模板占位符未填充'}))];
+        const report={gaps,sourceMap:composed.sourceMap,candidates:composed.candidates,canFinalize:gaps.length===0};
+        if(action==='preflight'){send(200,{report});return;}
+        if(gaps.length && body.draft!==true){send(409,{error:'delivery-incomplete',message:'还有内容缺口，请先补充并确认来源，或明确生成草稿。',report});return;}
+        const provenance={version:1,status:body.draft===true?'draft':'final',stage,template:{id:template.id,hash:sha256(JSON.stringify(template))},sources:sources.map(({text,...source})=>source),mappings:body.mappings || {},gaps};
+        const files = await renderDeliverable(root, id, {
+          stage,
+          template,
+          provenance,
+          markdown: (body.draft===true?'# 草稿 · 内容尚待补充与确认\n\n':'')+composed.markdown,
+          title: (body.draft===true?'草稿 · ':'')+composed.title,
+          blocks: markdownBlocks(composed.markdown),
+          docx: buildDocx,
+          docxBytes:body.draft===true?undefined:docxBytes,
+          pdf: findSoffice(),
+          deck: Boolean(EXTRA_DOCUMENTS[stage] && EXTRA_DOCUMENTS[stage].deck),
+        });
+        send(200, {
+          files,
+          report,
+          mode,
+          missingFields,
+          pdfSupport: findSoffice() !== null || Boolean(pdfFont()),
+          delivery: await listDeliverables(root, id, stage),
+          ...(await listTemplates(root, id)),
+        });
+        return;
+      }
+      send(400, { error: 'unknown-action' });
+    } catch (error) {
+      send(400, { error: 'template-failed', message: String((error && error.message) || error) });
     }
   };
 }
@@ -2021,6 +2220,7 @@ export function apply(ctx) {
       [ROUTES.manager, managerHandler(webCtx, fence, manager)],
       [ROUTES.state, stateHandler(webCtx, fence)],
       [ROUTES.artifacts, artifactsHandler(webCtx, fence)],
+      [ROUTES.templates, templatesHandler(webCtx, fence)],
       [ROUTES.review, reviewHandler(webCtx, fence)],
       [ROUTES.knowledge, knowledgeHandler(webCtx, fence)],
       [ROUTES.context, contextHandler(webCtx, fence)],
@@ -2062,6 +2262,7 @@ export const __test = {
   scanDocuments,
   contentDisposition,
   requirementEntry,
+  templatesHandler,
   roundsHandler,
   boardsHandler,
   stateHandler,

@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
-async function client(fetcher = async () => { throw new Error('Unexpected request'); }) {
+async function client(fetcher = async () => { throw new Error('Unexpected request'); }, reactOverrides = {}) {
   let factory;
   const timers = new Map(); let nextTimer = 0;
   const React = { Component: class {}, createElement: (type, props, ...children) => ({ type, props: { ...props, children } }),
-    useState: (initial) => [initial, () => {}] };
+    useState: (initial) => [initial, () => {}], ...reactOverrides };
   const context = vm.createContext({
     window: { __ModuleLoader__: { load: (module) => { factory = module.factory; } } },
     console, fetch: fetcher, crypto: { randomUUID: () => 'test-id' },
@@ -16,7 +16,7 @@ async function client(fetcher = async () => { throw new Error('Unexpected reques
     URL, AbortController,
   });
   const source = (await readFile(new URL('../client.js', import.meta.url), 'utf8')).replace(
-    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { workbenchStore, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
+    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { Button, useToast, disabledToastListeners, workbenchStore, managerBlocks, proposalLines, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
   assert.ok(source.includes('globalThis.testClient'), 'client test seam inserted');
   vm.runInContext(source, context);
   factory((name) => { if (name === 'react') return React; throw new Error(name); });
@@ -282,4 +282,57 @@ test('bulk removal sends explicit board identities including legacy records with
  const body=JSON.parse(request.options.body);
  assert.equal(body.action,'remove-many');assert.equal(body.items[1].boardId,'');
  assert.deepEqual(body.items[0],a);
+});
+
+test('a manager reply becomes headings, lists and short paragraphs', async () => {
+  const c = await client();
+  const blocks = c.managerBlocks('**第一版安排**\n\n1. 用途：记录日记。\n2. 图片：可上传。\n\n请问你希望支持多张图片吗？\n\n其余内容按假设先写好，后面可以再改。');
+  assert.equal(JSON.stringify(blocks.map((b) => b.kind)), JSON.stringify(['heading', 'list', 'question', 'para']));
+  assert.equal(blocks[1].ordered, true);
+  assert.equal(JSON.stringify(blocks[1].items), JSON.stringify(['用途：记录日记。', '图片：可上传。']));
+  assert.equal(blocks[2].text, '请问你希望支持多张图片吗？');
+});
+
+test('a wall of text is split into sentence groups', async () => {
+  const c = await client();
+  const long =
+    '第一句说明这个项目要解决的问题和背景，以及它为什么现在做。' +
+    '第二句说明本次范围包括哪些功能、不包括哪些内容，边界在哪里。' +
+    '第三句说明验收标准与如何判断做完，包括必须通过哪些检查。' +
+    '第四句说明已知风险、依赖和后续计划，便于评审时逐条核对。';
+  const blocks = c.managerBlocks(long);
+  assert.ok(blocks.length >= 2, 'expected the paragraph to be split');
+  assert.ok(blocks.every((b) => b.kind === 'para'));
+  assert.ok(blocks.every((b) => b.text.length < long.length));
+});
+
+test('a suggested instruction is split into readable clauses', async () => {
+  const c = await client();
+  const lines = c.proposalLines('整理日记本需求说明书：支持文字与图片；数据存在本地；明确暂不包含多用户。产出 Markdown 与 Word。');
+  assert.equal(lines.length, 4);
+  assert.ok(lines.every((line) => line.endsWith('。')));
+  assert.equal(c.proposalLines('只有一句话').length, 0);
+});
+
+
+test('disabled actions explain requirements without executing or submitting, including repeated clicks',async()=>{
+  const c=await client();const messages=[];let runs=0,prevented=0,stopped=0;
+  c.disabledToastListeners.add((message,kind)=>messages.push({message,kind}));
+  const button=c.Button({disabled:true,disabledReason:'请先确认模板。',type:'submit',onClick:()=>runs++,children:'生成'});
+  assert.equal(button.props['aria-disabled'],true);assert.equal(button.props.disabled,undefined);assert.equal(button.props.type,'button');assert.equal(button.props.title,'请先确认模板。');
+  for(let i=0;i<2;i++)button.props.onClick({preventDefault:()=>prevented++,stopPropagation:()=>stopped++});
+  assert.equal(runs,0);assert.equal(prevented,2);assert.equal(stopped,2);assert.equal(messages.length,2);assert.equal(messages[0].message,'请先确认模板。');
+});
+test('enabled actions keep submit behavior, custom classes and accessibility labels',async()=>{
+  const c=await client();let runs=0;const button=c.Button({disabled:false,type:'submit',className:'custom-action','aria-label':'保存',onClick:()=>runs++,children:'保存'});
+  assert.equal(button.props.type,'submit');assert.equal(button.props['aria-disabled'],undefined);assert.equal(button.props.className,'custom-action');assert.equal(button.props['aria-label'],'保存');button.props.onClick({});assert.equal(runs,1);
+});
+
+test('disabled-action toast subscribes once, refreshes on repeated clicks and cleans up on unmount',async()=>{
+  const effects=[],updates=[];
+  const c=await client(undefined,{useState:()=>[null,value=>updates.push(value)],useRef:()=>({current:null}),useCallback:fn=>fn,useEffect:fn=>effects.push(fn)});
+  c.useToast();const cleanups=effects.map(effect=>effect());assert.equal(c.disabledToastListeners.size,1);
+  const button=c.Button({disabled:true,disabledReason:'请先填写目标。'});const event={preventDefault(){},stopPropagation(){}};
+  button.props.onClick(event);button.props.onClick(event);assert.equal(updates.length,2);assert.equal(updates[1].message,'请先填写目标。');assert.notEqual(updates[0],updates[1]);
+  cleanups.forEach(cleanup=>cleanup?.());assert.equal(c.disabledToastListeners.size,0);button.props.onClick(event);assert.equal(updates.length,2);
 });

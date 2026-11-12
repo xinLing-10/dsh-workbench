@@ -1,4 +1,28 @@
 /** DSH 0.2.1 Host SessionController boundary. No browser or model credentials here. */
+/**
+ * Normalize a turn-end reason.
+ *
+ * DSH reports `TurnEndReason` as an object (`{kind:'completed'}`,
+ * `{kind:'error', error:{message}}`); the manager only needs a stable string
+ * kind plus a readable detail for the failure message.
+ */
+export function reasonOf(reason) {
+  if (typeof reason === 'string') return { kind: reason, detail: '' };
+  const kind = typeof reason?.kind === 'string' ? reason.kind : '';
+  const failure = reason?.error ?? reason?.cause ?? null;
+  const detail =
+    typeof failure === 'string'
+      ? failure
+      : typeof failure?.message === 'string' && failure.message !== ''
+        ? failure.message
+        : typeof failure?.kind === 'string'
+          ? failure.kind
+          : typeof failure?.code === 'string'
+            ? failure.code
+            : '';
+  return { kind, detail: String(detail || '').slice(0, 300) };
+}
+
 export function createSessionAdapter(controller) {
   const signal = () => AbortSignal.timeout(15000);
   return {
@@ -21,7 +45,9 @@ export function createSessionAdapter(controller) {
       const last = events.filter((e) => e.type === 'assistant/message' && !e.data.interrupted).at(-1);
       const text = (last?.data.message?.content || []).filter((p) => p.type === 'text').map((p) => p.text).join('\n');
       const terminal = !!end && (!start || end.seq > start.seq) && projection.values.turn?.openTurnStartSeq == null;
-      return { terminal, reason: terminal ? end.data.reason : '', text, events,
+      const raw = terminal ? end.data.reason : '';
+      const normalized = reasonOf(raw);
+      return { terminal, reason: normalized.kind, detail: normalized.detail, rawReason: raw, text, events,
         running: projection.values.turn?.openTurnStartSeq != null };
     },
     async cancel(sessionId) {

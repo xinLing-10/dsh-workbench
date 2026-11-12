@@ -2,9 +2,9 @@
 
 面向 DeepSeek Harness（DSH）的产品开发插件，将需求分析、详细设计、编码实现、测试验收和交付组织在同一个工作台中。
 
-当前开发分支：**personal_manager / v1.7.0**。默认通过项目管家统一沟通，支持需求文档、实施方案及完整软件三类交付目标。包含后台任务调度、文档版本确认、知识与上下文追溯、确认快照 ZIP 交付。原五阶段界面保留为详细工作区。已合入主分支 v1.6.1 的阶段引导、队列详情、需求批量删除、对话需求标签和插件保护规则。
+当前开发分支：**personal_manager / v1.14.1**。默认通过项目管家沟通，保留完整文档、版本确认和交付记录；需要时可进入五阶段详细工作区。
 
-[项目管家使用与实现说明](dsh-workbench/docs/personal-manager.md)；升级后需重启 DSH Host 并刷新页面。
+第一次使用请看 **[项目管家图文使用手册](dsh-workbench/docs/manager-user-guide.md)**，也可下载并在浏览器打开 **[离线图文版 HTML](dsh-workbench/docs/manager-user-guide.html)**。后续简洁模式见 [实现方案](dsh-workbench/docs/manager-simple-mode-plan.md)（尚未实施）。技术维护见 [管家实现说明](dsh-workbench/docs/personal-manager.md)。后续修改管家模式必须同步更新主使用手册，规则见 [AGENTS.md](AGENTS.md)。
 
 ![工作台知识视图](dsh-workbench/docs/screenshot-knowledge.png)
 
@@ -32,13 +32,15 @@ dsh plugin --profile web add link:/absolute/path/to/dsh-workbench/stage-presets
 
 ## 验证
 
+修改使用手册后，在 `dsh-workbench` 中运行 `npm run docs:guide`，重新生成离线图文版。
+
 ```sh
 cd dsh-workbench
 npm run check
 npm test
 ```
 
-当前包含 93 项自动化测试。界面截图来自开发验证；测试不等于所有模型、部署方式及多人场景均已验证。
+当前包含 147 项自动化测试。界面截图来自开发验证；测试不等于所有模型、部署方式及多人场景均已验证。
 
 ## 数据与使用范围
 

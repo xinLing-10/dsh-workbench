@@ -1,6 +1,6 @@
 {
   "name": "dsh-workbench",
-  "version": "1.7.0",
+  "version": "1.14.1",
   "private": true,
   "description": "A product development workbench with versioned document review, traceable project knowledge and inspectable stage context",
   "type": "module",
@@ -22,9 +22,16 @@
     "reviews.js",
     "knowledge.js",
     "docs/*.md",
+    "templates.js",
     "manager.js",
     "manager-adapter.js",
-    "execution-policy.js"
+    "execution-policy.js",
+    "manager-message.js",
+    "delivery-plan.js",
+    "delivery-export.js",
+    "docs/*.html",
+    "docs/*.svg",
+    "scripts/build-manager-guide.mjs"
   ],
   "dsh": {
     "bundle": {
@@ -38,6 +45,15 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check client.js && node --check manager.js && node --check manager-adapter.js && node --check execution-policy.js"
+    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check templates.js && node --check client.js && node --check manager.js && node --check manager-adapter.js && node --check execution-policy.js && node --check manager-message.js && node --check delivery-plan.js && node --check delivery-export.js",
+    "docs:guide": "node scripts/build-manager-guide.mjs"
+  },
+  "dependencies": {
+    "markdown-it": "14.3.3",
+    "pdfkit": "0.17.2",
+    "pptxgenjs": "4.0.0"
+  },
+  "overrides": {
+    "image-size": "2.0.3"
   }
 }
