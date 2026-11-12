@@ -30,6 +30,38 @@ dsh plugin --profile web add link:/absolute/path/to/dsh-workbench/stage-presets
 
 完整功能与安装说明见 [工作台 README](dsh-workbench/README.md)，知识管理说明见 [使用文档](dsh-workbench/docs/knowledge.md)。
 
+## 阿里云服务器部署
+
+当前提供“一个个人实例 → 每位受邀可信用户一个独立实例”的 Docker 部署方式，完整步骤见 **[ECS 部署指南](deploy/README.md)**。推荐使用专用子域名和 HTTPS，Nginx 转发到服务器本机端口，保留原生 DSH 认证。它不是共享实例的多租户服务，也尚未提供自助注册或计费。
+
+本次准备对应 2 核 2GB、Ubuntu 22.04 的上海 ECS，先部署一个实例。大陆服务器需核对 ICP 备案；域名实名认证、备案、DNS、证书和公网验收分别完成，不能仅因购买域名就认为已经上线。完整准备流程：
+
+1. 只读检查服务器架构、内存、磁盘、端口和已有网站，确认 Docker / Compose。
+2. 本机构建匹配架构的镜像和源码归档，上传后导入服务器。
+3. 启动只监听本机端口的独立实例，验证认证、管家、模型小任务、审阅、下载和重启恢复。
+4. 核对备案与证书，配置专属 DNS / Nginx；确认所需安全组规则后验收 HTTPS 和 WebSocket，再邀请用户。
+
+本地仓库根目录准备示例：
+
+```sh
+python3 deploy/release.py --output /tmp/dsh-workbench-1.18.0-source.tar.gz
+tar -tzf /tmp/dsh-workbench-1.18.0-source.tar.gz
+docker build --platform linux/amd64 -f deploy/Dockerfile -t dsh-workbench:1.18.0-ad9c578 .
+docker save dsh-workbench:1.18.0-ad9c578 | gzip > /tmp/dsh-workbench-1.18.0-image.tar.gz
+```
+
+上传与运行命令、证书路径、单用户开通、备份、升级回滚和故障处理见部署指南。服务器若为 ARM，应改用 `linux/arm64`。归档不包含模型密钥、个人会话或业务数据；不要复制本地整个 `.dsh` 上云。镜像自带中文字体，复杂 Word 转 PDF 仍需按需配置 LibreOffice。
+
+部署文件检查：
+
+```sh
+python3 -B -m unittest discover -s deploy -p 'test_*.py'
+sh -n deploy/entrypoint.sh
+node --check deploy/healthcheck.mjs
+```
+
+部署包和配置准备不代表真实服务器上线完成；实际状态与阻塞项记录在 [部署准备记录](deploy/preparation-status.md)。
+
 ## 验证
 
 修改使用手册后，在 `dsh-workbench` 中运行 `npm run docs:guide`，重新生成离线图文版。
@@ -46,7 +78,7 @@ npm test
 
 项目文档、确认记录和上下文清单存储在项目的 `.dsh/workbench/` 中；DSH 自身配置、会话和凭据由 DSH 管理。运行数据、密钥及本地备份不应提交到仓库。
 
-当前面向个人或可信环境使用，尚未实现面向公共服务的多租户权限与执行隔离。Agent 可以读写工作文件并执行命令，请使用合适的权限和独立工作环境。
+当前面向个人或可信环境使用，尚未实现面向公共服务的多租户权限与强执行隔离。部署脚本提供每人独立容器及持久卷，不能替代陌生用户任意代码的强沙箱。Agent 可以读写工作文件并执行命令，请使用合适的权限和独立工作环境。
 
 若开始任务时提示后端接口未就绪，需重启 DSH Host；仅刷新前端不能加载新增的 Host 路由。
 
