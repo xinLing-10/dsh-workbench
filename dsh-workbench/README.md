@@ -14,6 +14,10 @@
 
 ![项目管家](docs/screenshot-manager.png)
 
+## 1.6.1：明确进度与任务入口
+
+新增当前需求与下一步引导、按需求名称查看的 Agent 队列详情、指定任务与原生会话入口，并限制业务任务修改插件本体。使用方法与验证边界见 [阶段引导与执行边界](docs/stage-guidance.md)。
+
 ## 它解决什么问题
 
 - **阶段不会混在一起**：每个阶段有独立的输入、产出、准出条件和人工确认。
@@ -353,7 +357,7 @@ $DSH_HOME/workbench/requirements.json
 | `POST /workbench/review` | 添加评论、标记解决或重新打开，校验正文哈希及评论版本 |
 | `GET/POST /workbench/knowledge` | 搜索知识、管理手工条目/关联、参考资料与阶段选择 |
 | `GET/POST /workbench/context` | 预览、构建和回看有版本记录的阶段上下文 |
-| `GET/DELETE /workbench/requirements` | 需求档案：`GET` 返回所有项目记录（带目录是否存在标记），`DELETE ?root=…` 只移除档案行 |
+| `GET/POST/DELETE /workbench/requirements` | 需求档案：`GET` 返回所有项目记录（带目录是否存在标记），`POST {action:"remove-many",items:[{root,boardId}]}` 精确批量移除档案行，保留单条 `DELETE` 接口 |
 | `GET /workbench/file?path=…` | 文本、Markdown、代码、DOCX 预览，大小上限 2 MB；`soft=1` 时缺失返回 200 `{missing:true}` |
 | `GET /workbench/raw?path=…` | 原始字节：PDF/DOCX/图片按原格式返回，`download=1` 变成下载；大小上限 64 MB |
 | `POST /workbench/upload` | 保存 `.md/.txt/.docx` 到 `.dsh/uploads/` 并抽取文本，大小上限 8 MB |
@@ -414,3 +418,11 @@ dsh-workbench/
 - **部署不接管凭据**：插件只把主机、用户、路径和授权状态传给 agent；实际 SSH 认证由你的 key/agent 完成，部署前请在会话中复核命令。
 - **Host 路由变更需重启**：前端热刷新不会重新注册 Node 侧路由。
 - **首次打开需要确认项目目录**：默认取 Host 启动目录或最近会话目录；如果不对，在「项目信息」中改为实际项目路径。
+
+### 需求档案批量删除
+
+每条记录左侧可勾选，顶部可全选、取消选择及删除选中记录；全选后删除即清理当前列表。确认面板列出需求名称、路径与数量，取消后保留勾选，删除失败也保留选择供重试。删除期间禁用重复提交。
+
+删除仅移除全局需求档案记录，不删除项目代码、交付文档、看板或 Agent 会话，也不停止任务。仍保留的看板在后续保存时可能重新写入档案。全选只删除确认时列出的记录，之后新增的记录不会一并删除。
+
+批量请求先完整校验，再以项目根目录和看板 ID 精确匹配，一次写入；全局档案更新串行处理，避免不同项目的并发删除或保存覆盖。

@@ -23,7 +23,8 @@
     "knowledge.js",
     "docs/*.md",
     "manager.js",
-    "manager-adapter.js"
+    "manager-adapter.js",
+    "execution-policy.js"
   ],
   "dsh": {
     "bundle": {
@@ -37,6 +38,6 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check client.js && node --check manager.js && node --check manager-adapter.js"
+    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check client.js && node --check manager.js && node --check manager-adapter.js && node --check execution-policy.js"
   }
 }
