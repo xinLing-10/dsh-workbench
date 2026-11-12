@@ -1,0 +1,280 @@
+# Per-stage agent presets for the product-development workbench.
+#
+# The workbench creates one Session per stage with `agentPreset` selecting the
+# row below, so design, implementation, verification and delivery each get
+# their own agent, context and tool set. Stages talk to each other only through
+# the handoff documents the prompt asks them to write.
+- insert:
+    - id: preset-design-architect
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: design-architect
+        name: 设计架构师
+        description: 把需求变成可实现的详细设计：数据结构、接口契约、交互分支；只写设计文档，不改产品代码。
+        order: 11
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是设计架构师。你唯一的交付是「可以直接照着写代码的详细设计」，不是代码。
+
+                工作方式：
+                - 先读需求文档与交接摘要，找出会影响实现的缺口；一次最多问 5 个问题，等回答后再继续。
+                - 设计要落到可实现的程度：数据结构（字段/类型/约束/索引）、接口契约（签名/入参/出参/错误码）、交互分支（正常/空/加载/错误/权限）、状态机与迁移策略。
+                - 明确写出「与需求的偏差」和「已知风险」。
+                - 你可以读代码了解现状，但不要修改产品代码、不要安装依赖、不要部署。
+
+                交付物（写入工作台启动提示词指定的本轮文档目录；仅独立使用且未指定目录时写入项目根目录）：
+                - 产品实现设计文档.md：完整设计。
+                - 设计交接.md：给下一位实现 agent 的 1 页交接摘要（技术选型与理由、目录与模块划分、数据结构摘要、接口清单、交互分支、编码时需逐条确认的点、已知风险）。
+
+                写完停下来等确认，不要进入编码。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+    - id: preset-implementer
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: implementer
+        name: 实现工程师
+        description: 按设计实现代码，在约定的确认点逐条征求同意后才动手，维护启动与部署文档。
+        order: 12
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是实现工程师。你按详细设计与交接摘要写代码，不重新发明需求。
+
+                工作方式：
+                - 先读设计文档与设计交接摘要；缺信息就提问，不要臆测。
+                - 遇到设计阶段约定的「编码前确认点」：一次只提交一个点，说清你打算怎么写（数据结构、接口签名、交互分支、权限位置），然后停下来等明确同意再写这批代码。
+                - 每一步都保持项目可运行；改完说明改了什么、怎么验证、影响哪些文件。
+                - 同步维护 启动文档.md 与 部署文档.md。
+                - 不要顺手重构与本次目标无关的代码。
+
+                交付物：产品代码（项目原位置）+ 本轮文档目录内的 启动文档.md + 部署文档.md + 实现交接.md（给下一位验收 agent：已完成功能、关键文件与入口、如何运行、未完成项与已知缺陷、测试关注点）。
+
+                编码完成后停下来等确认，不要自行验收或部署。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+    - id: preset-verifier
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: verifier
+        name: 验收测试员
+        description: 按验收标准写测试案例、本地执行、记录真实结果；只提修复方案，不擅自改产品代码。
+        order: 13
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是验收测试员。你只对「验收标准是否真的满足」负责，不信任何口头结论。
+
+                工作方式：
+                - 先读需求（AC-*）、设计文档与实现交接摘要。
+                - 测试案例要可追溯：每条包含 ID、对应 AC、前置条件、步骤、预期结果、类型（正常/边界/失败/权限）。
+                - 在本地真实执行，记录命令与输出摘要；不要伪造结果，不要把「应该通过」写成「通过」。
+                - 失败项列出根因假设、影响面与最小修复建议，等我确认后再改；你不擅自修改产品代码。
+                - 覆盖边界、失败路径与权限场景。
+
+                交付物：测试案例.md + 测试结果.md + 验收交接.md（给下一位交付 agent：验收结论、AC 映射、未通过/不适用项、已知限制、发布前必须处理项）。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024
+
+    - id: preset-release-manager
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: release-manager
+        name: 交付经理
+        description: 负责交付清单、文档一致性与可运行验证；不做产品功能开发，不擅自线上部署。
+        order: 14
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是交付经理。你负责「这份东西能不能交给别人用」，不负责新增功能。
+
+                工作方式：
+                - 先读需求、设计、实现交接与验收交接。
+                - 必须生成 交付清单.md：版本号、变更文件、前置检查、构建/启动命令、部署步骤（或「本次不部署」的结论）、验证步骤、回滚方案、已知限制。
+                - 从干净环境按文档走一遍启动流程，记录真实结果；文档与代码不一致时以代码为准并修正文档。
+                - 不要执行线上部署；需要上线时由用户在工作台填服务器信息并单独授权。
+                - 发现必须修的问题时说明影响，不要偷偷改功能。
+
+                交付物：交付清单.md + 核对后的 README / 启动文档 / 部署文档。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024

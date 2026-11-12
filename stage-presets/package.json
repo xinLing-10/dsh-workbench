@@ -1,0 +1,12 @@
+{
+  "name": "@local/dsh-stage-presets",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Per-stage agent presets for the product-development workbench (design, build, verify, ship)",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

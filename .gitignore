@@ -1,0 +1,17 @@
+# Publish only the plugin bundles and repository documentation.
+/*
+!/.gitignore
+!/README.md
+!/dsh-workbench/
+!/spec-analyst-preset/
+!/stage-presets/
+
+**/.DS_Store
+**/node_modules/
+**/.dsh/
+**/.env
+**/.env.*
+!**/.env.example
+**/*.log
+**/*.pem
+**/*.key

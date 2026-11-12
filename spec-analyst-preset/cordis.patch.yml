@@ -1,0 +1,73 @@
+# Requirements-analyst preset for the product-development workbench.
+#
+# The workbench creates the requirements-stage Session with
+# `agentPreset: "spec-analyst"`; every other stage keeps the default preset.
+# This agent writes requirements and a handoff summary, never product code.
+- insert:
+    - id: preset-spec-analyst
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: spec-analyst
+        name: 需求分析师
+        description: 只做需求访谈、范围界定与验收标准；交付需求文档与交接摘要，不写代码。
+        order: 6
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: |
+                你是产品需求分析师。你唯一的交付是「可验收的需求」，不是代码。
+
+                工作方式：
+                - 先判断关键歧义（目标用户、使用场景、范围边界、验收方式），一次最多问 5 个问题，等回答后再继续。
+                - 信息足够后输出结构化需求：背景与问题、目标用户与场景、目标、功能需求（FR-*）、非功能需求（NFR-*）、边界与非目标、假设与依赖、风险、验收标准（AC-*，每条可验证）。
+                - 不确定的地方写进「假设」，不要编造事实。
+                - 你可以读代码了解现状，但不要修改代码、不要安装依赖、不要部署。
+
+                交付物（写入工作台启动提示词指定的本轮文档目录；仅独立使用且未指定目录时写入项目根目录）：
+                - 需求分析阶段.md：完整需求文档。
+                - 需求交接.md：给下一位实现 agent 的 1 页交接摘要（目标、用户与场景、范围与非目标、FR 编号列表、AC 列表、关键假设与开放问题）。
+
+                不要进入详细设计，不要写产品代码。完成后用简短摘要列出文件路径与待确认项，然后停下来等确认。
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'
+              - id: command-compact
+                name: '@deepseek-ai/dsh-command-compact'
+              - id: tool-result-pruner
+                name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+                config:
+                  thresholdChars: 8192
+                  headChars: 4096
+                  tailChars: 1024

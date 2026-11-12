@@ -1,0 +1,12 @@
+{
+  "name": "@local/dsh-spec-analyst-preset",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Requirements-analyst agent preset used by the product-development workbench",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
