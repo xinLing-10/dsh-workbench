@@ -200,13 +200,15 @@ test('managed storage rejects symlink escape and cross-board path traversal', as
 
 test('plugin registers authenticated artifacts route and includes new module in packaging', async () => {
   const registrations = [];
-  const ctx = { inject: (_, fn) => fn({ get: () => undefined,
+  const ctx = { effect: () => {}, inject: (deps, fn) => deps.includes('sessionController') ? undefined : fn({ get: () => undefined,
     connection: { requestRejection: () => 403 },
     effect: (fn) => fn(), webServer: { register: (route) => { registrations.push(route); } } }) };
   apply(ctx);
   assert.ok(registrations.some((route) => route.path === '/workbench/artifacts'));
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.ok(manifest.files.includes('artifacts.js'));
+  assert.ok(manifest.files.includes('manager.js'));
+  assert.ok(registrations.some(route => route.path === '/workbench/manager'));
 });
 
 test('complete five-stage flow requires checklist and preserves all approved stages on save', async () => {

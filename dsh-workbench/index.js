@@ -1,3 +1,5 @@
+import { createManagerService } from './manager.js';
+import { createSessionAdapter } from './manager-adapter.js';
 import { knowledgeView, updateKnowledge, contextView, buildContext, readContext } from './knowledge.js';
 import { documentReview, updateComment, assertStageReviewed } from './reviews.js';
 import { boardDirectory, DOCUMENT_NAMES, initializeArtifacts, documentPath, reconcileArtifacts, artifactReview, confirmArtifacts, listApprovalHistory, managedPath, atomicJson } from './artifacts.js';
@@ -29,6 +31,7 @@ import { inflateRawSync } from 'node:zlib';
 
 /** Exact routes contributed by this plugin. */
 const ROUTES = {
+  manager: '/workbench/manager',
   state: '/workbench/state',
   artifacts: '/workbench/artifacts',
   review: '/workbench/review',
@@ -62,6 +65,7 @@ const LIBRARY_EXTENSIONS = new Set(['.md', '.markdown', '.mdx', '.docx', '.pdf',
 
 /** Original-byte response types; anything else is served as an opaque download. */
 const RAW_CONTENT_TYPES = {
+  '.zip': 'application/zip',
   '.pdf': 'application/pdf',
   '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.md': 'text/markdown; charset=utf-8',
@@ -1910,18 +1914,65 @@ function probeHandler(fence) {
  * caller can never read project files through them.
  */
 const projectQueues = new Map();
+async function exclusiveProject(key, callback) {
+  const previous = projectQueues.get(key) || Promise.resolve();
+  const operation = previous.catch(() => {}).then(callback);
+  projectQueues.set(key, operation);
+  try { return await operation; }
+  finally { if (projectQueues.get(key) === operation) projectQueues.delete(key); }
+}
+function managerHandler(ctx, fence, manager) {
+  return async (req, res) => {
+    if (fence(req, res)) return;
+    const send = responder(res);
+    try {
+      const root = await projectRoot(ctx, req);
+      const index = await ensureBoardIndex(root);
+      const { id, state } = await selectedBoard(root, index, req);
+      if (req.method === 'GET') send(200, await manager.view(root, id, state));
+      else if (req.method === 'POST') send(200, await manager.mutate(root, id, state, await readJson(req, 64 * 1024)));
+      else send(405, { message: 'method not allowed' });
+    } catch (error) { send(409, { error: 'manager-failed', message: String(error.message || error) }); }
+  };
+}
+
 function serializedHandler(ctx, handler) {
   return async (req, res) => {
     const key = await projectRoot(ctx, req).catch(() => '__invalid__');
-    const previous = projectQueues.get(key) || Promise.resolve();
-    const operation = previous.catch(() => {}).then(() => handler(req, res));
-    projectQueues.set(key, operation);
-    try { await operation; }
-    finally { if (projectQueues.get(key) === operation) projectQueues.delete(key); }
+    await exclusiveProject(key, () => handler(req, res));
   };
 }
 
 export function apply(ctx) {
+  let sessionAdapter = null;
+  const registry = () => join(harnessHome(), 'workbench', 'manager-projects.json');
+  const manager = createManagerService({
+    adapter: () => sessionAdapter,
+    exclusive: exclusiveProject,
+    onError: (error) => console.warn('workbench manager:', error.message),
+    loadRegistry: async () => { try { return JSON.parse(await readFile(registry(), 'utf8')); } catch (error) { if (error.code === 'ENOENT') return []; throw error; } },
+    saveRegistry: async (items) => { await mkdir(dirname(registry()), { recursive: true }); await atomicJson(registry(), items); },
+    readState: async (root, id) => { const index = await ensureBoardIndex(root); return (await selectedBoard(root, index, { headers: { 'x-workbench-board': id } })).state; },
+    saveState: async (root, id, state) => { const index = await ensureBoardIndex(root); await saveBoard(root, index, id, state); },
+    ensureParent: (file) => mkdir(dirname(file), { recursive: true }),
+    zip: zipStored,
+    generateWord: async (root, id) => {
+      const base = `${boardDirectory(id)}/documents/`;
+      const markdown = await readFile(await managedPath(root, base + '需求分析阶段.md'), 'utf8').catch((error) => { if (error.code === 'ENOENT') return ''; throw error; });
+      if (markdown.trim()) await writeFile(await managedPath(root, base + '需求分析阶段.docx'), buildDocx(markdown, '需求说明书'));
+    },
+  });
+  ctx.inject(['sessionController'], (sessionCtx) => {
+    sessionAdapter = createSessionAdapter(sessionCtx.sessionController);
+    sessionCtx.effect(() => () => { sessionAdapter = null; });
+  });
+  ctx.effect(() => {
+    let ready = false;
+    manager.restore().catch((error) => console.warn('workbench manager recovery:', error.message)).finally(() => { ready = true; });
+    const timer = setInterval(() => { if (ready) manager.tick().catch((error) => console.warn('workbench manager tick:', error.message)); }, 2000);
+    timer.unref?.();
+    return () => { clearInterval(timer); manager.dispose(); };
+  });
   ctx.inject(['webServer', 'connection'], (webCtx) => {
     /** Answer an unauthenticated or untrusted request; true when rejected. */
     const fence = (req, res) => {
@@ -1932,6 +1983,7 @@ export function apply(ctx) {
       return true;
     };
     const routes = [
+      [ROUTES.manager, managerHandler(webCtx, fence, manager)],
       [ROUTES.state, stateHandler(webCtx, fence)],
       [ROUTES.artifacts, artifactsHandler(webCtx, fence)],
       [ROUTES.review, reviewHandler(webCtx, fence)],
@@ -1958,6 +2010,7 @@ export function apply(ctx) {
 
 /** Exported for host-side tests; not part of the plugin's public contract. */
 export const __test = {
+  managerHandler, exclusiveProject,
   knowledgeHandler,
   contextHandler,
   reviewHandler,

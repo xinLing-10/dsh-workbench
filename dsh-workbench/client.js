@@ -4298,7 +4298,7 @@ ${text.trim().slice(0, 20_000)}
      * Document and project preview panes
      * ---------------------------------------------------------------- */
 
-    function DocumentPane({ state, copy, stage, docsVersion, onGenerateDocx, onRefresh, showToast, onRequestChanges, localeId, initialPath }) {
+    function DocumentPane({ state, copy, stage, docsVersion, onGenerateDocx, onRefresh, showToast, onRequestChanges, localeId, initialPath, managerMode }) {
       const expected = stageDocs(state, stage);
       const library = useDocumentLibrary(docsVersion);
       const [selected, setSelected] = React.useState(initialPath || '');
@@ -4383,7 +4383,7 @@ ${text.trim().slice(0, 20_000)}
             )
           : reviewable
             ? h(ReviewDocument, { key: `${state.boardId}:${current.path}`, name: current.path, state,
-                refreshVersion: docsVersion, onRequestChanges, showToast, localeId })
+                refreshVersion: docsVersion, onRequestChanges, showToast, localeId, managerMode })
           : kind === 'pdf'
             ? h(
                 'div',
@@ -5093,7 +5093,7 @@ ${text.trim().slice(0, 20_000)}
       } catch { return { text: '', anchor: null, contentHash: '' }; }
     }
 
-    function ReviewDocument({ name, state, refreshVersion, onRequestChanges, showToast, localeId }) {
+    function ReviewDocument({ name, state, refreshVersion, onRequestChanges, showToast, localeId, managerMode }) {
       const en = localeId === 'en';
       const [mode, setMode] = React.useState('content');
       const [approvalId, setApprovalId] = React.useState('');
@@ -5166,9 +5166,9 @@ ${text.trim().slice(0, 20_000)}
           h('div', { key: 'head', className: 'dshwb-reviewCommentsHead' }, [
             h('strong', { key: 'title' }, `${en ? 'Unresolved comments' : '未解决评论'} · ${open.length}`),
             h(Button, { key: 'send', size: 'xs', disabled: busy || !open.length,
-              onClick: async () => { setBusy(true); try { await onRequestChanges(buildReviewFeedback(data, state.artifactStorage.directory)); } finally { setBusy(false); } } }, en ? 'Request changes from Agent' : '将修改意见发给 Agent'),
+              onClick: async () => { setBusy(true); try { await onRequestChanges(buildReviewFeedback(data, state.artifactStorage.directory)); } finally { setBusy(false); } } }, managerMode ? '请管家处理修改意见' : en ? 'Request changes from Agent' : '将修改意见发给 Agent'),
           ]),
-          h('p', { key: 'hint', className: 'dshwb-hint' }, en ? 'Select a paragraph to comment. Agent responses do not resolve comments automatically.' : '点击正文旁的「评论此段」定位原文。Agent 修改完成后，请核对并手动解决评论。'),
+          h('p', { key: 'hint', className: 'dshwb-hint' }, managerMode ? '点击正文旁的「评论此段」提出修改。修改完成后，请核对内容，并将已经处理好的意见标记为已解决。' : en ? 'Select a paragraph to comment. Agent responses do not resolve comments automatically.' : '点击正文旁的「评论此段」定位原文。Agent 修改完成后，请核对并手动解决评论。'),
           h('label', { key: 'filter', className: 'dshwb-hint' }, h('input', { type: 'checkbox', checked: showResolved, onChange: (event) => setShowResolved(event.target.checked) }), en ? ' Show resolved comments' : ' 显示已解决评论'),
           ...data.comments.filter((item) => showResolved || item.status === 'open').map((item) => h('article', { key: item.id, className: 'dshwb-reviewComment' }, [
             h('div', { key: 'status', className: 'dshwb-hint' }, `${item.status === 'open' ? (en ? 'Open' : '未解决') : (en ? 'Resolved' : '已解决')} · L${item.anchor.startLine}–${item.anchor.endLine}`),
@@ -5423,7 +5423,210 @@ ${text.trim().slice(0, 20_000)}
       ]);
     }
 
+    const MANAGER_URL = '/workbench/manager';
+    const MANAGER_STAGE_TITLES = { spec: '需求说明书', design: '设计方案', build: '制作与运行说明', verify: '测试报告', ship: '交付清单' };
+    const MANAGER_JOB_LABELS = { queued: '已接下，正在安排', creating: '正在准备', submitting: '正在提交', running: '正在处理', cancelling: '正在停止', uncertain: '需要核对执行情况', completed: '沟通完成', awaiting_review: '文档已生成，等你阅读', needs_input: '还有内容需要补充', failed: '处理未完成', cancelled: '已停止' };
     function WorkbenchPage(props) {
+      const [mode, setMode] = React.useState('manager');
+      return mode === 'manager'
+        ? h(PersonalManagerPage, { ...props, onDetails: () => setMode('details') })
+        : h(DetailedWorkbenchPage, { ...props, onManager: () => setMode('manager') });
+    }
+
+    function PersonalManagerPage(props) {
+      const { state, meta, store } = useWorkbench();
+      const copy = copyFor(useLocaleId(props.localeRuntime));
+      const [data, setData] = React.useState(null);
+      const [error, setError] = React.useState('');
+      const [busy, setBusy] = React.useState(false);
+      const [draft, setDraft] = React.useState('');
+      const [draftOwner, setDraftOwner] = React.useState('');
+      const [goal, setGoal] = React.useState('');
+      const [name, setName] = React.useState('');
+      const [contractMode, setContractMode] = React.useState('requirements');
+      const [tab, setTab] = React.useState('documents');
+      const [selectedStage, setSelectedStage] = React.useState('spec');
+      const [reviewed, setReviewed] = React.useState(false);
+      const [checks, setChecks] = React.useState([]);
+      const [retry, setRetry] = React.useState(0);
+      const [toast, showToast] = useToast();
+      const [revisionText, setRevisionText] = React.useState('');
+      const pendingRef = React.useRef(false);
+      const messagesRef = React.useRef(null);
+      const followMessagesRef = React.useRef(true);
+      React.useEffect(() => {
+        const log = messagesRef.current;
+        if (log && followMessagesRef.current) log.scrollTop = log.scrollHeight;
+      }, [data?.messages.at(-1)?.id]);
+      const identity = `${meta.projectRoot}:${state.boardId}`;
+      const identityRef = React.useRef(identity); identityRef.current = identity;
+      const draftKey = `dshwb-manager-draft:${identity}`;
+      React.useEffect(() => {
+        setData(null); setError(''); setGoal(state.project.goal || ''); setName(state.project.name || '');
+        setSelectedStage('spec'); setReviewed(false); setChecks([]); setRevisionText('');
+        setDraftOwner(identity);
+        try { setDraft(localStorage.getItem(draftKey) || ''); } catch { setDraft(''); }
+      }, [identity]);
+      React.useEffect(() => { if (draftOwner !== identity) return; try { localStorage.setItem(draftKey, draft); } catch {} }, [draft, draftKey, draftOwner, identity]);
+      React.useEffect(() => {
+        if (!state.boardId || meta.phase !== 'ready') return;
+        let alive = true; let polling = false;
+        const controller = new AbortController();
+        const refresh = async () => {
+          if (polling || pendingRef.current) return; polling = true;
+          try {
+            const response = await apiFetch(MANAGER_URL, { cache: 'no-store', signal: controller.signal });
+            const payload = await readApiJson(response, MANAGER_URL);
+            if (alive && !pendingRef.current && identityRef.current === identity) {
+              setData(current => !current || payload.revision >= current.revision ? payload : current);
+              setError('');
+            }
+          } catch (err) { if (alive && err.name !== 'AbortError') setError(err.message); }
+          finally { polling = false; }
+        };
+        refresh(); const timer = setInterval(refresh, 2500);
+        return () => { alive = false; controller.abort(); clearInterval(timer); };
+      }, [identity, meta.phase, retry]);
+      const selectedHashes = data?.review.stages[selectedStage]?.hashes;
+      const hashKey = JSON.stringify(selectedHashes || {});
+      React.useEffect(() => { setReviewed(false); setChecks([]); }, [identity, selectedStage, hashKey]);
+      const task = data?.jobs.findLast(j => ['queued', 'creating', 'submitting', 'running', 'cancelling', 'uncertain'].includes(j.status));
+      const locked = busy || !!task;
+      const mutate = async (body) => {
+        if (pendingRef.current || !data) return false;
+        pendingRef.current = true; setBusy(true);
+        const captured = identity;
+        try {
+          await store.flush();
+          const response = await apiFetch(MANAGER_URL, { method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ ...body, revision: data.revision, requestId: uid('manager') }) });
+          const payload = await readApiJson(response, MANAGER_URL);
+          if (identityRef.current !== captured) return false;
+          setData(payload); setError('');
+          // Refresh host-owned board revisions before any later browser autosave.
+          await store.hydrate(true);
+          return true;
+        } catch (err) {
+          if (identityRef.current === captured) { setError(err.message); setRetry(n => n + 1); }
+          return false;
+        } finally { pendingRef.current = false; setBusy(false); }
+      };
+      const message = async (text) => {
+        const value = text.trim(); if (!value) return;
+        if (await mutate({ action: 'message', text: value })) { setDraft(''); try { localStorage.removeItem(draftKey); } catch {} }
+      };
+      const download = async (path, filename) => {
+        try {
+          const response = await apiFetch(`${RAW_URL}?path=${encodeURIComponent(path)}&download=1`);
+          if (!response.ok) { await readApiJson(response); return; }
+          const url = URL.createObjectURL(await response.blob());
+          const link = document.createElement('a'); link.href = url; link.download = filename; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (err) { showToast(err.message, 'error'); }
+      };
+      const selectProject = async () => {
+        try { const path = await props.pickDirectory?.(); if (path) { await store.flush(); await store.setRoot(path); } }
+        catch (err) { setError(err.message); }
+      };
+      const newProject = async () => {
+        if (busy || pendingRef.current) return;
+        setBusy(true);
+        try {
+          await store.flush();
+          const response = await apiFetch(BOARDS_URL, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'create', flow: 'new' }) });
+          const payload = await readApiJson(response); store.adopt({ ...payload.state, boardId: payload.boardId });
+        } catch (err) { setError(err.message); }
+        finally { setBusy(false); }
+      };
+      const configure = async (event) => {
+        event.preventDefault();
+        store.patchProject({ name: name.trim() || '我的项目' });
+        await mutate({ action: 'configure', mode: contractMode, goal });
+      };
+      const stage = data?.nextStage || selectedStage;
+      const outputs = data?.outputs || [];
+      const hasDocument = outputs.some(o => o.stage === selectedStage);
+      return h('div', { className: 'dshpm-page', 'data-testid': 'personal-manager-page' }, [
+        h('style', { key: 'style' }, CSS + MANAGER_CSS),
+        h(Toast, { key: 'toast', toast }),
+        h('header', { key: 'header', className: 'dshpm-header' }, [
+          h('div', { key: 'title' }, h('p', { className: 'dshpm-eyebrow' }, '你的项目管家'), h('h1', null, state.project.name || '一起把想法做出来'),
+            h('p', { className: 'dshwb-hint' }, data?.complete ? '本次约定的成果已确认，可以下载文档包。' : task ? MANAGER_JOB_LABELS[task.status] : data?.contract ? `接下来：${MANAGER_STAGE_TITLES[stage] || '了解你的想法'}` : '告诉我想做什么。我会陪你整理想法、准备文档并完成交付。')),
+          h('div', { key: 'actions', className: 'dshpm-actions' },
+            h(Button, { disabled: busy, onClick: selectProject }, '选择项目文件夹'),
+            h(Button, { disabled: busy, onClick: newProject }, '新建项目'),
+            h(Button, { onClick: props.onDetails }, '详细工作区')),
+        ]),
+        (error || meta.phase === 'offline') ? h('div', { key: 'error', role: 'alert', className: 'dshpm-notice' },
+          h('p', null, error || meta.error || '暂时无法连接工作台，输入内容会保留。'), h(Button, { onClick: () => { setRetry(n => n + 1); store.hydrate(true); } }, '重新连接')) : null,
+        !data && !error ? h('p', { key: 'loading', role: 'status' }, '正在找回你的项目…') : null,
+        data && !data.contract ? h('form', { key: 'setup', className: 'dshpm-setup', onSubmit: configure }, [
+          h('h2', { key: 'title' }, '这次想让我帮你完成什么？'),
+          h('div', { key: 'choices', className: 'dshpm-goals', role: 'group', 'aria-label': '本次交付目标' },
+            [['requirements', '整理需求文档', '把想法写清楚，拿去沟通或询价'], ['design', '形成实施方案', '获得需求说明书、设计与实施方案'], ['software', '制作可用工具', '完成制作、检查，并保留交付文档']].map(([value, title, description]) =>
+              h('button', { key: value, type: 'button', 'aria-pressed': contractMode === value, onClick: () => setContractMode(value) }, h('strong', null, title), h('span', null, description)))),
+          h('label', { key: 'name' }, '给项目起个名字', h('input', { className: 'dshwb-input', maxLength: 100, value: name, onChange: e => setName(e.target.value), placeholder: '例如：小店预约' })),
+          h('label', { key: 'goal' }, '说说你的想法', h('textarea', { className: 'dshwb-input', rows: 4, required: true, maxLength: 8000, value: goal, onChange: e => setGoal(e.target.value), placeholder: '例如：我开了一家理发店，希望客人能在手机上预约。' })),
+          h('p', { key: 'help', className: 'dshwb-hint' }, '不需要懂技术。正式文档会完整保留，可以阅读、修改和下载；外部发布与费用不会自动执行。'),
+          h(Button, { key: 'submit', type: 'submit', kind: 'primary', disabled: busy || !goal.trim() }, '请管家接下这个项目'),
+        ]) : data ? h('div', { key: 'layout', className: 'dshpm-layout' }, [
+          h('section', { key: 'chat', className: 'dshpm-conversation', 'aria-label': '和管家说' }, [
+            h('h2', { key: 'title' }, '和管家说'),
+            !data.available ? h('p', { key: 'unavailable', role: 'alert' }, '管家执行服务尚未连接，请重启 DSH Host。') : null,
+            h('div', { key: 'messages', className: 'dshpm-messages', ref: messagesRef, onScroll: e => { const el = e.currentTarget; followMessagesRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; }, role: 'log', 'aria-label': '管家对话记录' }, data.messages.map(m =>
+              h('article', { key: m.id, className: `dshpm-message dshpm-message-${m.role}` }, h('strong', null, m.role === 'user' ? '你' : '项目管家'), h('p', null, m.text)))),
+            task ? h('div', { key: 'task', className: 'dshpm-notice', role: 'status' }, h('strong', null, MANAGER_JOB_LABELS[task.status]),
+              task.error ? h('p', null, task.error) : h('p', null, '你可以离开页面，处理记录会保留。需要权限或业务决定时会等待确认。'),
+              h('div', { className: 'dshpm-actions' },
+                task.sessionId ? h(Button, { onClick: () => props.openSession(task.sessionId) }, '查看授权与处理详情') : null,
+                task.status === 'uncertain' ? h(Button, { disabled: busy, onClick: () => mutate({ action: 'recheck' }) }, '重新检查状态') : null,
+                h(Button, { disabled: busy || task.status === 'cancelling', onClick: () => mutate({ action: 'cancel' }) }, '停止这项工作'))) : null,
+            data.proposal ? h('article', { key: 'proposal', className: 'dshpm-proposal' }, h('h3', null, '建议的下一步'), h('p', null, data.proposal.instruction),
+              h(Button, { kind: 'primary', disabled: locked || !data.available, onClick: () => mutate({ action: 'dispatch', proposalId: data.proposal.id }) }, '按这个安排开始')) : null,
+            h('form', { key: 'composer', className: 'dshpm-composer', onSubmit: e => { e.preventDefault(); message(draft); } },
+              h('label', null, '想补充什么，或有什么不明白？', h('textarea', { className: 'dshwb-input', rows: 3, value: draft, maxLength: 8000, onChange: e => setDraft(e.target.value), placeholder: '直接告诉我，也可以说“我不明白，举个例子”。' })),
+              h('div', { className: 'dshpm-actions' }, h(Button, { type: 'submit', kind: 'primary', disabled: locked || !data.available || !draft.trim() }, '告诉管家'),
+                h(Button, { disabled: locked || !data.available, onClick: () => message('请根据本次交付目标，帮我整理第一版安排；信息不足时先问我。') }, '帮我整理第一版'))),
+          ]),
+          h('section', { key: '成果', className: 'dshpm-results', 'aria-label': '我的成果' }, [
+            h('div', { key: 'tabs', className: 'dshwb-tabGroup', role: 'group', 'aria-label': '项目内容' },
+              [['documents', '我的成果'], ['decisions', '等我确认'], ['history', '项目记录']].map(([value, title]) => h('button', { key: value, type: 'button', 'aria-pressed': tab === value, onClick: () => setTab(value) }, title))),
+            tab === 'history' ? h('div', { key: 'history' }, h('h2', null, '项目记录'), h('p', null, `交付目标：${data.contract.goal}`),
+              h('p', { className: 'dshwb-hint' }, '需求文档提供 Word 和 Markdown；其他文档目前提供 Markdown。'),
+              ...data.jobs.map(j => h('article', { key: j.id, className: 'dshpm-record' }, h('strong', null, j.kind === 'conversation' ? '管家沟通' : MANAGER_STAGE_TITLES[j.stage]),
+                h('p', null, MANAGER_JOB_LABELS[j.status]), j.error ? h('p', null, j.error) : null,
+                j.sessionId ? h(Button, { onClick: () => props.openSession(j.sessionId) }, '查看处理记录') : null))) : [
+              h('h2', { key: 'title' }, tab === 'decisions' ? '阅读并确认具体版本' : '文档也是你的正式成果'),
+              h('div', { key: 'stages', className: 'dshpm-actions', role: 'group', 'aria-label': '成果分类' },
+                [...new Set([data.nextStage || 'spec', ...outputs.map(o => o.stage)])].map(s => h('button', { key: s, type: 'button', className: 'dshwb-chip', 'aria-pressed': selectedStage === s, onClick: () => setSelectedStage(s) }, MANAGER_STAGE_TITLES[s]))),
+              h('div', { key: 'files', className: 'dshpm-files' }, outputs.filter(o => o.stage === selectedStage).map(o => h('article', { key: o.name }, h('strong', null, o.name),
+                h('span', null, o.confirmed ? '已确认版本' : '待审阅'), h(Button, { onClick: () => download(o.name, o.name) }, `下载${o.name.endsWith('.docx') ? ' Word' : ''}`)))),
+              hasDocument ? h('div', { key: `document-${identity}-${selectedStage}`, className: 'dshwb-documentWorkspace dshpm-document' },
+                h(DocumentPane, { state, copy, managerMode: true, stage: selectedStage, localeId: 'zh', docsVersion: data.revision, showToast,
+                  onRefresh: () => setRetry(n => n + 1), onGenerateDocx: () => showToast('需求 Word 会在管家任务完成后从正式原稿生成。'),
+                  onRequestChanges: text => { setDraft(text); showToast('修改意见已放入输入框，确认后告诉管家。'); } })) : h('p', { key: 'empty', className: 'dshpm-empty' }, '正式文档准备好后会出现在这里。你可以先和管家聊聊想法。'),
+              data.nextStage === selectedStage && hasDocument ? h('div', { key: 'approval', className: 'dshpm-approval' }, [
+                h('h3', { key: 'title' }, '确认当前文档版本'),
+                h('p', { key: 'hint', className: 'dshwb-hint' }, '请核对本类全部文档。确认会保存版本快照；以后修改将重新审阅。'),
+                selectedStage === 'build' ? data.buildChecks.map(c => h('label', { key: c.id }, h('input', { type: 'checkbox', checked: checks.includes(c.id), onChange: e => setChecks(v => e.target.checked ? [...v, c.id] : v.filter(x => x !== c.id)) }), c.text)) : null,
+                h('label', { key: 'read' }, h('input', { type: 'checkbox', checked: reviewed, onChange: e => setReviewed(e.target.checked) }), '我已阅读本类文档，并确认当前内容符合需要'),
+                h(Button, { key: 'confirm', kind: 'primary', disabled: locked || !reviewed, onClick: () => mutate({ action: 'approve', stage: selectedStage, reviewed: true, checks, hashes: selectedHashes }) }, '确认这一版'),
+              ]) : null,
+              hasDocument ? h('details', { key: 'revise', className: 'dshpm-revise' }, h('summary', null, '这份成果需要修改'),
+                h('p', { className: 'dshwb-hint' }, '重新开启后，这份成果及受影响的后续文档需要重新确认，历史版本保留。'),
+                h('textarea', { className: 'dshwb-input', rows: 2, value: revisionText, onChange: e => setRevisionText(e.target.value), 'aria-label': '成果修改要求', maxLength: 6000 }),
+                h(Button, { disabled: locked || !revisionText.trim(), onClick: async () => { if (await mutate({ action: 'revise', stage: selectedStage, text: revisionText })) setRevisionText(''); } }, '提交修改安排')) : null,
+              data.complete ? h('div', { key: 'delivery', className: 'dshpm-proposal' }, h('h3', null, '正式文档交付'),
+                h('p', null, '下载包包含已确认的正式文档和版本清单。代码和运行环境不包含在文档包中。'),
+                h(Button, { disabled: locked, onClick: () => mutate({ action: 'package' }) }, data.delivery ? '重新整理文档包' : '整理交付文档包'),
+                data.delivery ? h(Button, { kind: 'primary', onClick: () => download(data.delivery.path, '项目交付文档.zip') }, '下载交付文档包') : null) : null,
+            ],
+          ]),
+        ]) : null,
+      ]);
+    }
+
+    function DetailedWorkbenchPage(props) {
       const { state, meta, store } = useWorkbench();
       const localeId = useLocaleId(props.localeRuntime);
       const copy = copyFor(localeId);
@@ -5973,6 +6176,7 @@ ${text.trim().slice(0, 20_000)}
             h(
               'div',
               { key: 'meta', className: 'dshwb-topbarMeta' },
+              props.onManager ? h(Button, { onClick: props.onManager }, '返回项目管家') : null,
               h(
                 'div',
                 { key: 'project', className: 'dshwb-topProject' },
@@ -7158,6 +7362,51 @@ textarea.dshwb-input { resize: vertical; }
   .dshwb-knowledgeFilters input { grid-column: 1 / -1; }
   .dshwb-knowledgeFields { grid-template-columns: minmax(0, 1fr); }
 }
+`;
+
+    const MANAGER_CSS = `
+.dshpm-page { max-width: 1680px; margin: 0 auto; padding: 28px; color: var(--dsw-alias-label-primary); font: 14px/1.65 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+.dshpm-page *, .dshpm-page *::before, .dshpm-page *::after { box-sizing: border-box; }
+.dshpm-header { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 24px; }
+.dshpm-eyebrow { color: var(--dsw-alias-state-business-primary); font-size: 13px; margin: 0; }
+.dshpm-page h1 { font-size: 26px; line-height: 1.4; margin: 4px 0; }
+.dshpm-page h2 { font-size: 18px; margin: 0 0 14px; }
+.dshpm-page h3 { font-size: 15px; margin: 0 0 8px; }
+.dshpm-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dshpm-page .dshwb-btn { font-size: 13px; min-height: 34px; white-space: normal; }
+.dshpm-setup { max-width: 900px; margin: 24px auto; padding: 26px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 16px; background: var(--dsw-alias-bg-layer-1); }
+.dshpm-goals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
+.dshpm-goals button { font: inherit; text-align: left; color: inherit; background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l1); border-radius: 12px; padding: 16px; cursor: pointer; }
+.dshpm-goals button strong, .dshpm-goals button span { display: block; }
+.dshpm-goals button span { color: var(--dsw-alias-label-secondary); margin-top: 6px; font-size: 13px; }
+.dshpm-goals button[aria-pressed="true"] { border-color: var(--dsw-alias-state-business-primary); background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 6%, var(--dsw-alias-bg-layer-1)); }
+.dshpm-page label { display: block; margin: 10px 0; }
+.dshpm-page input[type="checkbox"] { margin-right: 8px; accent-color: var(--dsw-alias-state-business-primary); }
+.dshpm-page textarea, .dshpm-page input { font: inherit; }
+.dshpm-page textarea { resize: vertical; }
+.dshpm-page button:focus-visible, .dshpm-page summary:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 3px; }
+.dshpm-layout { display: grid; grid-template-columns: minmax(300px, .8fr) minmax(0, 1.2fr); gap: 20px; align-items: start; }
+.dshpm-conversation, .dshpm-results { min-width: 0; padding: 22px; border: 1px solid var(--dsw-alias-border-l1); border-radius: 16px; background: var(--dsw-alias-bg-layer-1); }
+.dshpm-results > .dshwb-tabGroup { margin-bottom: 20px; }
+.dshpm-messages { max-height: 54dvh; min-height: 120px; overflow: auto; padding: 2px; }
+.dshpm-message { padding: 14px; margin-bottom: 12px; border-radius: 12px; background: var(--dsw-alias-bg-layer-2); overflow-wrap: anywhere; }
+.dshpm-message p { white-space: pre-wrap; margin: 5px 0 0; }
+.dshpm-message strong { font-size: 12px; color: var(--dsw-alias-label-secondary); }
+.dshpm-message-user { margin-left: 24px; background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, var(--dsw-alias-bg-layer-1)); }
+.dshpm-notice, .dshpm-proposal, .dshpm-approval { border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2); padding: 16px; border-radius: 12px; margin: 14px 0; overflow-wrap: anywhere; }
+.dshpm-proposal { border-color: var(--dsw-alias-state-business-primary); }
+.dshpm-proposal p { white-space: pre-wrap; }
+.dshpm-files { display: grid; gap: 8px; margin: 16px 0; }
+.dshpm-files article { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; border-bottom: 1px solid var(--dsw-alias-border-l1); padding-bottom: 8px; overflow-wrap: anywhere; }
+.dshpm-files span { color: var(--dsw-alias-label-secondary); font-size: 12px; margin-right: auto; }
+.dshpm-document { height: 540px; min-height: 350px; }
+.dshpm-empty { padding: 45px 16px; text-align: center; color: var(--dsw-alias-label-secondary); }
+.dshpm-record { border-top: 1px solid var(--dsw-alias-border-l1); padding: 12px 0; }
+.dshpm-revise { margin: 18px 0; }
+.dshpm-revise summary { cursor: pointer; }
+.dshpm-page .dshwb-chip[aria-pressed="true"] { border-color: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-state-business-primary); }
+@media(max-width: 1000px) { .dshpm-layout { grid-template-columns: minmax(0, 1fr); } .dshpm-header { flex-wrap: wrap; } }
+@media(max-width: 600px) { .dshpm-page { padding: 14px; } .dshpm-goals { grid-template-columns: minmax(0, 1fr); } .dshpm-setup, .dshpm-conversation, .dshpm-results { padding: 16px; } .dshpm-page h1 { font-size: 22px; } .dshpm-document { height: 460px; } }
 `;
 
     /* ------------------------------------------------------------------
