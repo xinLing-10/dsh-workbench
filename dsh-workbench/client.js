@@ -5892,14 +5892,17 @@ ${text.trim().slice(0, 20_000)}
       }
       return h('div',{className:'dshpm-markdown'},tree(nodes));
     }
-    function ManagerQuestion({ block, locked, lockedReason, onAnswer }) {
+    function ManagerQuestion({ block, locked, lockedReason, onAnswer, compact = false }) {
       const [answer,setAnswer]=React.useState('');
       return h('section',{className:'dshpm-question','aria-label':'管家需要你回答的问题'},[
         h(MessageMarkdown,{key:'text',nodes:block.nodes,fallback:block.text}),
         block.answer ? h('p',{key:'answered'},'已回答：'+block.answer) : h('div',{key:'input'},[
           h('div',{key:'options',className:'dshpm-actions'},(block.options || []).map(option=>h(Button,{key:option,disabled:locked,disabledReason:lockedReason,onClick:()=>onAnswer(block.id,option)},option))),
-          h('textarea',{key:'answer',className:'dshwb-input',rows:2,maxLength:2000,value:answer,disabled:locked,'aria-label':'你的回答',onChange:e=>setAnswer(e.target.value)}),
-          h(Button,{key:'send',kind:'primary',disabled:locked || !answer.trim(),disabledReason:locked ? lockedReason : '请先填写回答，或直接点击一个选项。',onClick:async()=>{if(await onAnswer(block.id,answer))setAnswer('');}},'提交回答')
+          h(compact && block.options?.length?'details':'div',{key:'custom',className:'dshpm-customAnswer'},[
+            compact && block.options?.length?h('summary',{key:'summary'},'我有其他回答'):null,
+            h('textarea',{key:'answer',className:'dshwb-input',rows:2,maxLength:2000,value:answer,disabled:locked,'aria-label':'你的回答',onChange:e=>setAnswer(e.target.value)}),
+            h(Button,{key:'send',kind:'primary',disabled:locked || !answer.trim(),disabledReason:locked ? lockedReason : '请先填写回答，或直接点击一个选项。',onClick:async()=>{if(await onAnswer(block.id,answer))setAnswer('');}},'提交回答')
+          ])
         ])
       ]);
     }
@@ -5923,14 +5926,31 @@ ${text.trim().slice(0, 20_000)}
     }
     function managerModePreference(saved) {return saved==='full'?'full':'simple';}
     function readManagerMode() {try {return managerModePreference(localStorage.getItem('dshwb-manager-mode'));} catch {return 'simple';}}
-    function ManagerActionCard({ presentation:p, busy, onAction, onAnswer }) {
+    function ManagerActionCard({ presentation:p, busy, onAction, onAnswer, cancelInComposer = false }) {
       const primary=p.primaryAction;
-      return h('section',{className:'dshpm-actionCard','aria-label':'现在需要你做什么'},[
-        h('p',{key:'eyebrow',className:'dshpm-eyebrow'},'现在需要你做什么'),
+      return h('section',{className:'dshpm-actionCard','aria-label':'管家的下一步'},[
+        h('p',{key:'eyebrow',className:'dshpm-eyebrow'},'项目管家 · 下一步'),
         h('h2',{key:'title'},p.title),h('p',{key:'description'},p.description),
         p.instruction?h('div',{key:'instruction',className:'dshpm-planText'},h(MessageMarkdown,{fallback:p.instruction})):null,
-        p.phase==='needs_info' && p.question?h(ManagerQuestion,{key:p.question.id,block:p.question,locked:busy,lockedReason:'正在提交回答，请等待完成。',onAnswer}):h(Button,{key:'primary',kind:'primary',disabled:busy || primary.enabled===false,disabledReason:busy?'正在提交操作，请等待完成。':primary.reason || p.blockingReasons[0],onClick:()=>onAction(primary,p.revision)},primary.label),
-        h('div',{key:'secondary',className:'dshpm-actions'},p.secondaryActions.map(a=>h(Button,{key:a.kind,disabled:busy || a.enabled===false,disabledReason:busy?'正在提交操作，请等待完成。':a.reason,onClick:()=>onAction(a,p.revision)},a.label)))
+        p.phase==='needs_info' && p.question?h(ManagerQuestion,{key:p.question.id,block:p.question,compact:true,locked:busy,lockedReason:'正在提交回答，请等待完成。',onAnswer}):h(Button,{key:'primary',kind:'primary',disabled:busy || primary.enabled===false,disabledReason:busy?'正在提交操作，请等待完成。':primary.reason || p.blockingReasons[0],onClick:()=>onAction(primary,p.revision)},primary.label),
+        h('div',{key:'secondary',className:'dshpm-actions'},p.secondaryActions.filter(a=>!cancelInComposer || a.kind!=='cancel').map(a=>h(Button,{key:a.kind,disabled:busy || a.enabled===false,disabledReason:busy?'正在提交操作，请等待完成。':a.reason,onClick:()=>onAction(a,p.revision)},a.label)))
+      ]);
+    }
+
+    // Keep the latest decision in the conversation, while respecting a reader scrolling back.
+    function ManagerThread({messages,presentation,busy,locked,lockedReason,onAction,onAnswer,onDocument,progress}) {
+      const viewport=React.useRef(null);
+      const following=React.useRef(true);
+      const [away,setAway]=React.useState(false);
+      const latest=()=>{const el=viewport.current;if(el){el.scrollTop=el.scrollHeight;following.current=true;setAway(false);}};
+      React.useEffect(()=>{if(following.current)latest();},[messages.at(-1)?.id,presentation.phase,presentation.relatedQuestionId,presentation.primaryAction.proposalId,!!progress]);
+      return h('div',{className:'dshpm-thread'},[
+        h('div',{key:'log',className:'dshpm-messages',ref:viewport,role:'log','aria-label':'管家对话记录',onScroll:e=>{const el=e.currentTarget;following.current=el.scrollHeight-el.scrollTop-el.clientHeight<60;setAway(!following.current);}},[
+          ...messages.map(m=>h(ManagerMessage,{key:m.id,message:m,hideQuestions:true,locked,lockedReason,onAnswer,onDocument})),
+          h(ManagerActionCard,{key:'next',presentation,busy,onAction,onAnswer,cancelInComposer:true}),
+          progress
+        ]),
+        away?h(Button,{key:'latest',className:'dshwb-btn dshwb-btn-secondary dshwb-btn-md dshpm-latest',onClick:latest},'回到最新进展 ↓'):null
       ]);
     }
 
@@ -5973,16 +5993,17 @@ ${text.trim().slice(0, 20_000)}
       React.useEffect(()=>{heading.current?.focus();},[step]);
       const next=()=>{if(!goal.trim() || busy)return;if(!name.trim())setName(goal.trim().slice(0,20));setStep(2);};
       const chosen=MANAGER_GOAL_OPTIONS.find(item=>item.mode===mode);
-      return h('form',{className:'dshpm-setup',onSubmit:e=>{e.preventDefault();if(step===1)next();else if(!busy && goal.trim() && chosen)onConfigure(mode);}},[
-        h('p',{key:'step',className:'dshpm-eyebrow'},`第 ${step} 步，共 2 步`),
-        h('h2',{key:'heading',ref:heading,tabIndex:-1},step===1?'你想解决什么问题？':'这次希望先拿到什么？'),
+      return h('form',{className:'dshpm-setup dshpm-welcome',onSubmit:e=>{e.preventDefault();if(step===1)next();else if(!busy && goal.trim() && chosen)onConfigure(mode);}},[
+        h('p',{key:'step',className:'dshpm-eyebrow'},step===1?'从一句话开始':'我们先约定要拿到什么'),
+        h('h2',{key:'heading',ref:heading,tabIndex:-1},step===1?'你好，今天想一起完成什么？':'这次，先帮你做到哪一步？'),
         step===1?h('div',{key:'idea'},[
-          h('label',{key:'name'},'项目名字（可选）',h('input',{className:'dshwb-input',maxLength:100,value:name,onChange:e=>setName(e.target.value),placeholder:'例如：小店预约'})),
-          h('label',{key:'goal'},'说说你的想法',h('textarea',{className:'dshwb-input',rows:4,maxLength:8000,value:goal,onChange:e=>setGoal(e.target.value),placeholder:'例如：我开了一家理发店，希望客人能在手机上预约。先帮我把需求写清楚。'})),
-          h('p',{key:'hint',className:'dshwb-hint'},'不用填写技术方案。只要说清楚谁遇到什么问题、希望有什么改变。'),
+          h('details',{key:'name',className:'dshpm-nameOption'},h('summary',null,name?'项目名字：'+name:'给这件事起个名字（可选）'),h('label',null,'项目名字（可选）',h('input',{className:'dshwb-input',maxLength:100,value:name,onChange:e=>setName(e.target.value),placeholder:'例如：小店预约'}))),
+          h('label',{key:'goal'},h('span',{className:'dshpm-srOnly'},'说说你的想法'),h('textarea',{className:'dshwb-input',rows:4,maxLength:8000,value:goal,onChange:e=>setGoal(e.target.value),placeholder:'例如：我开了一家理发店，希望客人能在手机上预约。先帮我把需求写清楚。'})),
+          h('p',{key:'hint',className:'dshwb-hint'},'像聊天一样说就好，不需要懂技术。接下来会和你确认成果范围。'),
+          h('div',{key:'starters',className:'dshpm-starters','aria-label':'想法示例'},[['做一个预约工具','我想做一个小店预约工具，让客人提前选择到店时间。'],['修改现有项目','我有一个现成项目，想增加新功能，并保留原有功能。'],['先整理一份文档','我想先把想法整理成清楚的需求文档，暂时不编写软件。']].map(([label,text])=>h(Button,{key:label,disabled:busy,disabledReason:'正在创建项目，请等待完成。',onClick:()=>setGoal(text)},label))),
           h(Button,{key:'next',kind:'primary',disabled:busy || !goal.trim(),disabledReason:busy?'正在处理，请稍等。':'请先填写你的想法。',onClick:next},'下一步：选择想要的成果')
         ]):h('div',{key:'scope'},[
-          h('p',{key:'idea'},'你的想法：'+goal),
+          h('p',{key:'idea',className:'dshpm-ideaEcho'},goal),
           h('div',{key:'choices',className:'dshpm-goals',role:'group','aria-label':'本次交付目标'},MANAGER_GOAL_OPTIONS.map(option=>h('button',{key:option.mode,type:'button','aria-pressed':mode===option.mode,onClick:()=>setMode(option.mode)},h('strong',null,option.title),h('span',null,option.description)))),
           h('details',{key:'purpose'},h('summary',null,'补充用途（可选）'),h('label',null,'项目用途',h('select',{className:'dshwb-input',value:scenario,onChange:e=>setScenario(e.target.value)},[['product','产品开发'],['thesis','毕业设计'],['pitch','产品概念 / 融资']].map(([value,label])=>h('option',{key:value,value},label)))),h('p',{className:'dshwb-hint'},'用途只影响附加文档选项，不会扩大你刚才选择的交付目标。缺少的真实材料仍需要补充。')),
           h('p',{key:'confirm',className:'dshpm-scopeNotice'},`本次约定：${chosen?.description || ''} 不会自动发布或产生费用。`),
@@ -6015,6 +6036,9 @@ ${text.trim().slice(0, 20_000)}
       const [retry, setRetry] = React.useState(0);
       const [toast, showToast] = useToast();
       const [revisionText, setRevisionText] = React.useState('');
+      const composerRef=React.useRef(null);
+      const [focusComposer,setFocusComposer]=React.useState(0);
+      React.useEffect(()=>{if(focusComposer)composerRef.current?.focus();},[focusComposer]);
       const pendingRef = React.useRef(false);
       const messagesRef = React.useRef(null);
       const followMessagesRef = React.useRef(true);
@@ -6069,6 +6093,7 @@ ${text.trim().slice(0, 20_000)}
       const locked = busy || !!task;
       const lockedReason = busy ? '正在提交当前操作，请等待完成。' : task?.status==='uncertain' ? '任务状态需要核对，请先点击「重新检查状态」或停止任务。' : '当前任务尚未结束，请等待完成或先停止这项工作。';
       const managerReason = !data?.available ? '管家执行服务尚未连接，请重启 DSH Host 后再试。' : lockedReason;
+      const stopAction=data?.presentation?.secondaryActions?.find(a=>a.kind==='cancel');
       const mutate = async (body) => {
         if (pendingRef.current || !data) return false;
         pendingRef.current = true; setBusy(true);
@@ -6154,6 +6179,23 @@ ${text.trim().slice(0, 20_000)}
       const selectedNames = {spec:['需求分析阶段.md','需求分析阶段.docx','需求交接.md',...(state.flow==='incremental'?['现状基线.md']:[])],design:['产品实现设计文档.md','设计交接.md'],build:['启动文档.md','部署文档.md','实现交接.md'],verify:['测试案例.md','测试结果.md','验收交接.md'],ship:['交付清单.md']}[selectedStage] || [];
       const missingSelected=selectedNames.filter(name=>!selectedHashes?.[name]);
       const approvalReason=managerApprovalReason({locked,lockedReason,missing:missingSelected,reviewed,stage:selectedStage,checks,buildChecks:data?.buildChecks || []});
+      const progress = task && (!simple || showProgress) ? h('div', { key: 'task', className: 'dshpm-notice dshpm-progress', role: 'status' }, [
+              h('div', { key: 'head', className: 'dshpm-progressHead' }, [
+                h('strong', { key: 'label' }, MANAGER_JOB_LABELS[task.status]),
+                task.progress ? h('span', { key: 'time', className: 'dshpm-progressTime' }, `已运行 ${formatDuration(task.progress.elapsedSeconds)}`) : null,
+              ]),
+              task.progress
+                ? h('ol', { key: 'steps', className: 'dshpm-steps', 'aria-label': '任务进度' }, task.progress.steps.map((step, index) =>
+                    h('li', { key: step.key, className: `dshpm-step dshpm-step-${step.state}`, 'aria-current': step.state === 'current' ? 'step' : undefined }, [
+                      h('span', { key: 'dot', className: 'dshpm-stepDot', 'aria-hidden': true }, step.state === 'done' ? '✓' : String(index + 1)),
+                      h('span', { key: 'text', className: 'dshpm-stepText' }, step.label),
+                    ])))
+                : null,
+              task.error ? h('p', { key: 'error', className: 'dshpm-stepError' }, task.error) : h('p', { key: 'note' }, '你可以离开页面，处理记录会保留。需要权限或业务决定时会等待确认。'),
+              h('div', { className: 'dshpm-actions' },
+                task.sessionId ? h(Button, { onClick: () => props.openSession(task.sessionId) }, '查看授权与处理详情') : null,
+                task.status === 'uncertain' ? h(Button, { disabled: busy, disabledReason: '正在处理当前操作，请等待完成后再试。', onClick: () => mutate({ action: 'recheck' }) }, '重新检查状态') : null,
+                h(Button, { disabled: busy || task.status === 'cancelling', disabledReason: busy ? '正在提交操作，请等待完成。' : '停止请求已经提交，请等待任务结束。', onClick: () => mutate({ action: 'cancel' }) }, '停止这项工作'))]) : null;
       const results = data?.contract ? h('section', { key: '成果', className: 'dshpm-results', 'aria-label': '我的成果' }, [
             h('div', { key: 'tabs', className: 'dshwb-tabGroup', role: 'group', 'aria-label': '项目内容' },
               [['documents', '我的成果'], ['decisions', '等我确认'], ['history', '项目记录']].map(([value, title]) => h('button', { key: value, type: 'button', 'aria-pressed': tab === value, onClick: () => setTab(value) }, title))),
@@ -6183,7 +6225,7 @@ ${text.trim().slice(0, 20_000)}
               hasDocument ? h('div', { key: `document-${identity}-${selectedStage}`, className: 'dshwb-documentWorkspace dshpm-document' },
                 h(DocumentPane, { state, copy, managerMode: true, stage: selectedStage, localeId: 'zh', docsVersion: data.revision, showToast,
                   onRefresh: () => setRetry(n => n + 1), onGenerateDocx: () => showToast('需求 Word 会在管家任务完成后从正式原稿生成。'),
-                  onRequestChanges: text => { setDraft(text); showToast('修改意见已放入输入框，确认后告诉管家。'); } })) : h('p', { key: 'empty', className: 'dshpm-empty' }, '正式文档准备好后会出现在这里。你可以先和管家聊聊想法。'),
+                  onRequestChanges: text => { setDraft(text);if(simple){setSimpleResultsOpen(false);setFocusComposer(v=>v+1);}showToast('修改意见已放入输入框，确认后告诉管家。'); } })) : h('p', { key: 'empty', className: 'dshpm-empty' }, '正式文档准备好后会出现在这里。你可以先和管家聊聊想法。'),
               data.nextStage === selectedStage && hasDocument ? h('div', { key: 'approval', className: 'dshpm-approval' }, [
                 h('h3', { key: 'title' }, '确认当前文档版本'),
                 h('p', { key: 'hint', className: 'dshwb-hint' }, '请核对本类全部文档。确认会保存版本快照；以后修改将重新审阅。'),
@@ -6205,47 +6247,29 @@ ${text.trim().slice(0, 20_000)}
         h('style', { key: 'style' }, CSS + MANAGER_CSS),
         h(Toast, { key: 'toast', toast }),
         h('header', { key: 'header', className: 'dshpm-header' }, [
-          h('div', { key: 'title' }, h('p', { className: 'dshpm-eyebrow' }, '你的项目管家'), h('h1', null, state.project.name || '一起把想法做出来'),
-            h('p', { className: 'dshwb-hint' }, data?.complete ? '本次约定的成果已确认，可以下载文档包。' : task ? MANAGER_JOB_LABELS[task.status] : data?.contract ? `接下来：${MANAGER_STAGE_TITLES[stage] || '了解你的想法'}` : '告诉我想做什么。我会陪你整理想法、准备文档并完成交付。')),
+          h('div', { key: 'title' }, h('p', { className: 'dshpm-eyebrow' }, '你的项目管家'), h('h1', null, state.project.name || (simple?'项目管家':'一起把想法做出来')),
+            h('p', { className: 'dshwb-hint' }, data?.complete ? '本次约定的成果已确认，可以下载文档包。' : task ? MANAGER_JOB_LABELS[task.status] : data?.contract ? `本轮：${MANAGER_STAGE_TITLES[stage] || '了解你的想法'}${simple?' · '+data.presentation.title:''}` : '和一个管家沟通，完整文档随时保留。')),
           h('div', { key: 'actions', className: 'dshpm-actions' },[
             h('div',{key:'mode',className:'dshwb-tabGroup','aria-label':'管家显示模式',role:'group'},[['simple','简洁模式'],['full','完整管家']].map(([value,label])=>h('button',{key:value,type:'button','aria-pressed':managerMode===value,onClick:()=>changeManagerMode(value)},label))),
+            simple && data?.contract?h(Button,{key:'results',onClick:()=>{setTab('documents');setSimpleResultsOpen(true);}},`我的成果 · ${data.outputs.length}`):null,
             h(Button,{key:'help',onClick:()=>window.open('/workbench/guide','_blank','noopener')},'使用手册'),
             h('details',{key:'more',className:'dshpm-more'},h('summary',null,'更多'),
               h(Button, { disabled: busy, disabledReason: '正在处理当前操作，请等待完成后再试。', onClick: selectProject }, '选择项目文件夹'),
               h(Button, { disabled: busy, disabledReason: '正在处理当前操作，请等待完成后再试。', onClick: newProject }, '新建项目'),
+              simple && data?.contract?h(Button,{onClick:()=>{setTab('history');setSimpleResultsOpen(true);}},'项目记录'):null,
               h(Button, { onClick: props.onDetails }, '详细工作区'))]),
         ]),
         (error || meta.phase === 'offline') ? h('div', { key: 'error', role: 'alert', className: 'dshpm-notice' },
           h('p', null, error || meta.error || '暂时无法连接工作台，输入内容会保留。'), h(Button, { onClick: () => { setRetry(n => n + 1); store.hydrate(true); } }, '重新连接')) : null,
         !data && !error ? h('p', { key: 'loading', role: 'status' }, '正在找回你的项目…') : null,
         managerMode==='simple' && data && !supportsManagerPresentation(data.presentation)?h('p',{key:'protocol',role:'status'},'当前服务尚不支持简洁模式，暂时展示完整管家。'):null,
-        simple && data.contract?h(ManagerActionCard,{key:'action',presentation:data.presentation,busy,onAction:runManagerAction,onAnswer:(questionId,text)=>mutate({action:'answer',questionId,text})}):null,
-        simple && data.contract?h('div',{key:'simple-tools',className:'dshpm-actions'},[
-          h(Button,{key:'results',onClick:()=>setSimpleResultsOpen(v=>!v)},simpleResultsOpen?'收起成果':`我的成果（${data.outputs.length}）`),
-          h(Button,{key:'history',onClick:()=>{setTab('history');setSimpleResultsOpen(true);}},'历史记录')]):null,
         data && !data.contract ? h(ManagerSetup,{key:identity,name,goal,scenario,setName,setGoal,setScenario,busy,onConfigure:configure}) : data ? h('div', { key: 'layout', className: 'dshpm-layout' }, [
           h('section', { key: 'chat', className: 'dshpm-conversation', 'aria-label': '和管家说' }, [
-            h('h2', { key: 'title' }, '和管家说'),
+            !simple?h('h2', { key: 'title' }, '和管家说'):null,
             !data.available ? h('p', { key: 'unavailable', role: 'alert' }, '管家执行服务尚未连接，请重启 DSH Host。') : null,
-            h('div', { key: 'messages', className: 'dshpm-messages', ref: messagesRef, onScroll: e => { const el = e.currentTarget; followMessagesRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; }, role: 'log', 'aria-label': '管家对话记录' }, data.messages.map(m =>
+            simple?h(ManagerThread,{key:'messages',messages:data.messages,presentation:data.presentation,busy,locked:locked || !data.available,lockedReason:managerReason,onAction:runManagerAction,onAnswer:(questionId,text)=>mutate({action:'answer',questionId,text}),onDocument:stage=>{setSelectedStage(stage);setTab('documents');setSimpleResultsOpen(true);},progress}):h('div', { key: 'messages', className: 'dshpm-messages', ref: messagesRef, onScroll: e => { const el = e.currentTarget; followMessagesRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60; }, role: 'log', 'aria-label': '管家对话记录' }, data.messages.map(m =>
               h(ManagerMessage, { key:m.id, message:m, hideQuestions:simple, locked:locked || !data.available, lockedReason:managerReason, onAnswer:(questionId,text)=>mutate({action:'answer',questionId,text}), onDocument:stage=>setSelectedStage(stage) }))),
-            task && (!simple || showProgress) ? h('div', { key: 'task', className: 'dshpm-notice dshpm-progress', role: 'status' }, [
-              h('div', { key: 'head', className: 'dshpm-progressHead' }, [
-                h('strong', { key: 'label' }, MANAGER_JOB_LABELS[task.status]),
-                task.progress ? h('span', { key: 'time', className: 'dshpm-progressTime' }, `已运行 ${formatDuration(task.progress.elapsedSeconds)}`) : null,
-              ]),
-              task.progress
-                ? h('ol', { key: 'steps', className: 'dshpm-steps', 'aria-label': '任务进度' }, task.progress.steps.map((step, index) =>
-                    h('li', { key: step.key, className: `dshpm-step dshpm-step-${step.state}`, 'aria-current': step.state === 'current' ? 'step' : undefined }, [
-                      h('span', { key: 'dot', className: 'dshpm-stepDot', 'aria-hidden': true }, step.state === 'done' ? '✓' : String(index + 1)),
-                      h('span', { key: 'text', className: 'dshpm-stepText' }, step.label),
-                    ])))
-                : null,
-              task.error ? h('p', { key: 'error', className: 'dshpm-stepError' }, task.error) : h('p', { key: 'note' }, '你可以离开页面，处理记录会保留。需要权限或业务决定时会等待确认。'),
-              h('div', { className: 'dshpm-actions' },
-                task.sessionId ? h(Button, { onClick: () => props.openSession(task.sessionId) }, '查看授权与处理详情') : null,
-                task.status === 'uncertain' ? h(Button, { disabled: busy, disabledReason: '正在处理当前操作，请等待完成后再试。', onClick: () => mutate({ action: 'recheck' }) }, '重新检查状态') : null,
-                h(Button, { disabled: busy || task.status === 'cancelling', disabledReason: busy ? '正在提交操作，请等待完成。' : '停止请求已经提交，请等待任务结束。', onClick: () => mutate({ action: 'cancel' }) }, '停止这项工作'))]) : null,
+            !simple?progress:null,
             !simple && data.proposal ? (() => {
               const lines = proposalLines(data.proposal.instruction);
               return h('article', { key: 'proposal', className: 'dshpm-proposal' }, [
@@ -6266,9 +6290,12 @@ ${text.trim().slice(0, 20_000)}
                   }, data.proposal.extend ? '扩展交付目标并开始' : '按这个安排开始')),
               ]);
             })() : null,
+            simple?h('div',{key:'chat-starters',className:'dshpm-starters','aria-label':'对话提示'},[['请解释一下','我不太明白，请用具体例子解释一下。'],['补充一个要求','我想补充一个要求：'],['告诉我做到哪了','请用简单的话告诉我目前做到哪里，还需要我决定什么。']].map(([label,text])=>h(Button,{key:label,disabled:locked || !data.available,disabledReason:managerReason,onClick:()=>{setDraft(text);setFocusComposer(v=>v+1);}},label))):null,
             h('form', { key: 'composer', className: 'dshpm-composer', onSubmit: e => { e.preventDefault(); message(draft); } },
-              h('label', null, '想补充什么，或有什么不明白？', h('textarea', { className: 'dshwb-input', rows: 3, value: draft, maxLength: 8000, onChange: e => setDraft(e.target.value), placeholder: '直接告诉我，也可以说“我不明白，举个例子”。' })),
-              h('div', { className: 'dshpm-actions' }, h(Button, { type: 'submit', kind: 'primary', disabled: locked || !data.available || !draft.trim(), disabledReason:locked || !data.available ? managerReason : '请先填写想告诉管家的内容。' }, '告诉管家'),
+              h('label', null, '想补充什么，或有什么不明白？', h('textarea', { className: 'dshwb-input', ref:composerRef, rows: simple?2:3, value: draft, maxLength: 8000, onChange: e => setDraft(e.target.value), placeholder: '直接告诉我，也可以说“我不明白，举个例子”。' })),
+              h('div', { className: 'dshpm-actions' },
+                simple && stopAction?h(Button,{disabled:busy || stopAction.enabled===false,disabledReason:busy?'正在提交操作，请等待完成。':stopAction.reason,onClick:()=>runManagerAction(stopAction,data.revision)},task?.status==='cancelling'?'正在停止…':'停止这项工作'):null,
+                h(Button, { type: 'submit', kind: 'primary', disabled: locked || !data.available || !draft.trim(), disabledReason:locked || !data.available ? managerReason : '请先填写想告诉管家的内容。' }, '告诉管家'),
                 !simple ? h(Button, { disabled: locked || !data.available, disabledReason:managerReason, onClick: () => message('请根据本次交付目标，帮我整理第一版安排；信息不足时先问我。') }, '帮我整理第一版'):null)),
           ]),
           h(ManagerResultsSheet,{key:'result-sheet',simple,open:simpleResultsOpen,onClose:()=>setSimpleResultsOpen(false)},results),
@@ -8233,6 +8260,59 @@ textarea.dshwb-input { resize: vertical; }
 .dshpm-page .dshwb-chip[aria-pressed="true"] { border-color: var(--dsw-alias-state-business-primary); color: var(--dsw-alias-state-business-primary); }
 @media(max-width: 1000px) { .dshpm-layout { grid-template-columns: minmax(0, 1fr); } .dshpm-header { flex-wrap: wrap; } }
 @media(max-width: 600px) { .dshpm-page { padding: 14px 14px max(28px, calc(14px + env(safe-area-inset-bottom))); } .dshpm-goals { grid-template-columns: minmax(0, 1fr); } .dshpm-setup, .dshpm-conversation, .dshpm-results { padding: 16px; } .dshpm-page h1 { font-size: 22px; } .dshpm-document { height: 460px; } }
+
+/* Conversation-first simple mode: a single scroll area, stable composer and contextual decisions. */
+.dshpm-srOnly { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+.dshpm-simple { display:flex; flex-direction:column; padding:16px 24px max(12px,env(safe-area-inset-bottom)); overflow:hidden; background:var(--dsw-alias-bg-layer-1); }
+.dshpm-simple .dshpm-header { flex:none; margin:0; padding-bottom:14px; border-bottom:1px solid var(--dsw-alias-border-l1); gap:12px; }
+.dshpm-simple .dshpm-header h1 { font-size:19px; }
+.dshpm-simple .dshpm-header .dshpm-eyebrow { display:none; }
+.dshpm-simple .dshpm-header .dshwb-hint { margin:3px 0 0; font-size:12px; }
+.dshpm-simple .dshpm-layout { flex:1; min-height:0; width:100%; max-width:820px; margin:0 auto; gap:0; }
+.dshpm-simple .dshpm-conversation { display:flex; flex:1; min-height:0; flex-direction:column; padding:0; border:0; border-radius:0; }
+.dshpm-thread { position:relative; display:flex; flex:1; min-height:0; }
+.dshpm-simple .dshpm-messages { flex:1; min-height:0; max-height:none; padding:24px 12px 16px; overscroll-behavior:contain; overflow-anchor:none; }
+.dshpm-simple .dshpm-message { background:transparent; padding:6px 0; margin:0 0 24px; }
+.dshpm-simple .dshpm-message-user { margin-left:auto; max-width:85%; width:fit-content; border-radius:18px 18px 4px 18px; background:var(--dsw-alias-bg-layer-2); padding:12px 18px; }
+.dshpm-simple .dshpm-message > strong { display:block; margin-bottom:8px; }
+.dshpm-simple .dshpm-summary { border:0; padding:0; }
+.dshpm-simple .dshpm-actionCard { margin:8px 0 16px; padding:16px 20px; max-width:none; background:color-mix(in srgb,var(--dsw-alias-state-business-primary) 3%,var(--dsw-alias-bg-layer-1)); border-radius:14px; }
+.dshpm-simple .dshpm-actionCard h2 { font-size:17px; margin:8px 0; }
+.dshpm-simple .dshpm-actionCard > p { margin:6px 0; }
+.dshpm-simple .dshpm-question { background:transparent; border:0; padding:0 !important; font-weight:400; }
+.dshpm-simple .dshpm-composer { flex:none; margin:0; padding:12px 16px; border:1px solid var(--dsw-alias-border-l1); border-radius:20px; background:var(--dsw-alias-bg-layer-1); box-shadow:0 4px 20px #15254b08; }
+.dshpm-simple .dshpm-composer label { margin:0; font-size:12px; color:var(--dsw-alias-label-secondary); }
+.dshpm-simple .dshpm-composer textarea { width:100%; min-height:64px; max-height:160px; border:0; background:transparent; padding:8px 0; box-shadow:none; resize:vertical; color:var(--dsw-alias-label-primary); }
+.dshpm-simple .dshpm-composer .dshpm-actions { justify-content:flex-end; }
+.dshpm-starters { display:flex; flex-wrap:wrap; gap:6px; margin:8px 0; }
+.dshpm-starters .dshwb-btn { border-radius:99px; background:transparent; font-weight:400; font-size:12px; }
+.dshpm-latest { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); border-radius:99px; box-shadow:0 2px 10px #0002; }
+.dshpm-simple .dshpm-welcome { overflow:auto; flex:1; width:100%; max-width:780px; margin:0 auto; padding:clamp(24px,8vh,80px) 12px 24px; border:0; border-radius:0; background:transparent; }
+.dshpm-welcome h2 { font-size:26px; margin:12px 0 24px; }
+.dshpm-welcome .dshpm-nameOption { margin:16px 0; font-size:13px; color:var(--dsw-alias-label-secondary); }
+.dshpm-welcome summary { cursor:pointer; }
+.dshpm-welcome textarea { padding:18px; border-radius:18px; min-height:140px; }
+.dshpm-welcome .dshpm-ideaEcho { margin-left:auto; width:fit-content; max-width:90%; padding:12px 18px; background:var(--dsw-alias-bg-layer-2); border-radius:18px; overflow-wrap:anywhere; }
+.dshpm-simple .dshpm-welcome .dshpm-goals { grid-template-columns:1fr; gap:8px; }
+.dshpm-simple .dshpm-welcome .dshpm-goals button { min-height:0; padding:12px 16px; }
+.dshpm-simple .dshpm-welcome .dshpm-goals button span { margin-top:2px; }
+@media(max-width:600px) {
+ .dshpm-simple { padding:10px 12px max(10px,env(safe-area-inset-bottom)); }
+ .dshpm-simple .dshpm-header { align-items:flex-start; flex-wrap:wrap; padding-bottom:8px; gap:8px; }
+ .dshpm-simple .dshpm-header .dshpm-actions { gap:6px; }
+ .dshpm-simple .dshpm-header h1 { font-size:17px; }
+ .dshpm-simple .dshpm-header .dshwb-hint { max-width:100%; overflow-wrap:anywhere; }
+ .dshpm-simple .dshpm-messages { padding:14px 0 8px; }
+ .dshpm-simple .dshpm-composer { padding:10px 12px; border-radius:16px; }
+ .dshpm-simple .dshpm-composer textarea { min-height:48px; }
+ .dshpm-welcome h2 { font-size:23px; }
+ .dshpm-simple .dshpm-welcome { padding-top:24px; }
+ .dshpm-starters .dshwb-btn { min-height:36px; }
+}
+
+.dshpm-simple .dshpm-actionCard { border:0; border-left:2px solid var(--dsw-alias-border-l1); border-radius:0; background:transparent; padding:4px 0 4px 18px; }
+.dshpm-customAnswer > summary { cursor:pointer; font-size:13px; color:var(--dsw-alias-label-secondary); padding:8px 0; }
+.dshpm-simple .dshpm-question .dshpm-actions .dshwb-btn { border-radius:99px; }
 `;
 
     /* ------------------------------------------------------------------
@@ -8241,7 +8321,7 @@ textarea.dshwb-input { resize: vertical; }
 
     return {
       inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],
-      __test: { managerBlocks, MessageMarkdown, ManagerMessage, Button, useToast, disabledToastListeners, supportsManagerPresentation, ManagerActionCard, ManagerResultsSheet, managerApprovalReason, ManagerSetup, managerModePreference },
+      __test: { ManagerThread, managerBlocks, MessageMarkdown, ManagerMessage, Button, useToast, disabledToastListeners, supportsManagerPresentation, ManagerActionCard, ManagerResultsSheet, managerApprovalReason, ManagerSetup, managerModePreference },
 
       apply(ctx) {
         const localeRuntime = ctx.locale;

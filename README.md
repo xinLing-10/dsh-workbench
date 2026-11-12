@@ -2,7 +2,7 @@
 
 面向 DeepSeek Harness（DSH）的产品开发插件，将需求分析、详细设计、编码实现、测试验收和交付组织在同一个工作台中。
 
-当前开发分支：**personal_manager / v1.17.0**。默认通过项目管家沟通，保留完整文档、版本确认和交付记录；需要时可进入五阶段详细工作区。
+当前开发分支：**personal_manager / v1.18.0**。默认通过项目管家沟通，保留完整文档、版本确认和交付记录；需要时可进入五阶段详细工作区。
 
 第一次使用请看 **[项目管家图文使用手册](dsh-workbench/docs/manager-user-guide.md)**，也可下载并在浏览器打开 **[离线图文版 HTML](dsh-workbench/docs/manager-user-guide.html)**。后续简洁模式见 [实现方案](dsh-workbench/docs/manager-simple-mode-plan.md)（三个批次已完成；真人试用待安排）。技术维护见 [管家实现说明](dsh-workbench/docs/personal-manager.md)。后续修改管家模式必须同步更新主使用手册，规则见 [AGENTS.md](AGENTS.md)。
 
@@ -40,7 +40,7 @@ npm run check
 npm test
 ```
 
-当前包含 163 项自动化测试。界面截图来自开发验证；测试不等于所有模型、部署方式及多人场景均已验证。
+当前包含 166 项自动化测试。界面截图来自开发验证；测试不等于所有模型、部署方式及多人场景均已验证。
 
 ## 数据与使用范围
 

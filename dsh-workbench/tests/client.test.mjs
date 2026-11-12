@@ -16,7 +16,7 @@ async function client(fetcher = async () => { throw new Error('Unexpected reques
     URL, AbortController,
   });
   const source = (await readFile(new URL('../client.js', import.meta.url), 'utf8')).replace(
-    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { ManagerSetup, managerModePreference, managerApprovalReason, ManagerResultsSheet, supportsManagerPresentation, ManagerActionCard, Button, useToast, disabledToastListeners, workbenchStore, managerBlocks, proposalLines, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
+    "    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],", "    globalThis.testClient = { ManagerThread, ManagerQuestion, ManagerSetup, managerModePreference, managerApprovalReason, ManagerResultsSheet, supportsManagerPresentation, ManagerActionCard, Button, useToast, disabledToastListeners, workbenchStore, managerBlocks, proposalLines, projectContext, buildStagePrompt, requirementKey, removeRequirementRecords, requirementName, stageGuidance, personaQueue, TaskGuide, PersonaCard, ArtifactReviewPanel, stageStatus, copyFor, apiFetch, paragraphAnchors, buildReviewFeedback, ConversationDock, DiffView, sendContextPrompt };\n    return {\n      inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],");
   assert.ok(source.includes('globalThis.testClient'), 'client test seam inserted');
   vm.runInContext(source, context);
   factory((name) => { if (name === 'react') return React; throw new Error(name); });
@@ -368,4 +368,29 @@ test('first setup step does not create a contract and second step uses the expli
  let form=c.ManagerSetup(props);form.props.onSubmit({preventDefault(){}});assert.equal(configured.length,0);assert.ok(sets.includes(2));
  values=[2,'requirements'];form=c.ManagerSetup(props);form.props.onSubmit({preventDefault(){}});assert.equal(configured[0],'requirements');
  values=[2,'software'];form=c.ManagerSetup(props);form.props.onSubmit({preventDefault(){}});assert.equal(configured[1],'software');
+});
+
+function elements(tree) {
+ const nodes=[];const visit=n=>{if(!n || typeof n!=='object')return;nodes.push(n);(n.props?.children || []).flat(Infinity).forEach(visit);};visit(tree);return nodes;
+}
+test('conversation follows new activity only while at the bottom and provides a deliberate return',async()=>{
+ const el={scrollTop:0,scrollHeight:1000,clientHeight:300},refs=[{current:el},{current:true}],effects=[];
+ let refIndex=0,away=false;const c=await client(undefined,{useRef:()=>refs[refIndex++],useState:()=>[away,v=>{away=v;}],useEffect:fn=>effects.push(fn)});
+ const props={messages:[{id:'first',role:'assistant',text:'你好'}],presentation:{phase:'idle',primaryAction:{},secondaryActions:[]}};
+ let tree=c.ManagerThread(props);effects.pop()();assert.equal(el.scrollTop,1000);
+ const log=elements(tree).find(n=>n.props.role==='log');el.scrollTop=50;log.props.onScroll({currentTarget:el});assert.equal(away,true);
+ refIndex=0;tree=c.ManagerThread({...props,messages:[...props.messages,{id:'second',role:'assistant'}]});effects.pop()();assert.equal(el.scrollTop,50,'reading older messages must not jump');
+ const back=elements(tree).find(n=>n.type===c.Button);assert.ok(back);back.props.onClick();assert.equal(el.scrollTop,1000);assert.equal(away,false);
+});
+test('compact questions offer explicit options and a collapsed free answer without answering on render',async()=>{
+ const c=await client(),answers=[];const props={block:{id:'q1',text:'选哪个？',options:['方案一']},compact:true,locked:false,onAnswer:(...v)=>answers.push(v)};
+ const tree=c.ManagerQuestion(props),nodes=elements(tree);assert.equal(answers.length,0);
+ assert.ok(nodes.some(n=>n.type==='details' && !n.props.open));
+ nodes.find(n=>n.type===c.Button && n.props.children.flat().includes('方案一')).props.onClick();assert.deepEqual(answers,[['q1','方案一']]);
+ const noOptions=elements(c.ManagerQuestion({...props,block:{id:'q2',text:'说说你的想法'}}));assert.ok(!noOptions.some(n=>n.type==='details'));assert.ok(noOptions.some(n=>n.type==='textarea'));
+});
+test('welcome suggestions only fill an editable idea and never configure or execute',async()=>{
+ const goals=[],configured=[];let values=[1,'requirements'];const c=await client(undefined,{useState:()=>[values.shift(),()=>{}],useRef:()=>({current:null}),useEffect(){}});
+ const tree=c.ManagerSetup({name:'',goal:'',scenario:'product',setName(){},setGoal:v=>goals.push(v),setScenario(){},busy:false,onConfigure:v=>configured.push(v)});
+ const suggestion=elements(tree).find(n=>n.type===c.Button && n.props.children.flat().includes('做一个预约工具'));assert.ok(suggestion);suggestion.props.onClick();assert.match(goals[0],/预约/);assert.equal(configured.length,0);
 });
