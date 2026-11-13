@@ -2,13 +2,15 @@
 
 面向 DeepSeek Harness（DSH）的产品开发插件，将需求分析、详细设计、编码实现、测试验收和交付组织在同一个工作台中。
 
-当前开发分支：**personal_manager / v1.21.0**。默认通过项目管家沟通，保留完整文档、版本确认和交付记录；需要时可进入五阶段详细工作区。
+当前开发分支：**personal_manager / v1.22.0**。默认通过项目管家沟通，保留完整文档、版本确认和交付记录；需要时可进入五阶段详细工作区。
 
 第一次使用请看 **[项目管家图文使用手册](dsh-workbench/docs/manager-user-guide.md)**，也可下载并在浏览器打开 **[离线图文版 HTML](dsh-workbench/docs/manager-user-guide.html)**。后续简洁模式见 [实现方案](dsh-workbench/docs/manager-simple-mode-plan.md)（三个批次已完成；真人试用待安排）。技术维护见 [管家实现说明](dsh-workbench/docs/personal-manager.md)。后续修改管家模式必须同步更新主使用手册，规则见 [AGENTS.md](AGENTS.md)。
 
 ![工作台知识视图](dsh-workbench/docs/screenshot-knowledge.png)
 
 新增 **项目陪学（三个批次）**：打开业务项目后点击“带我学懂这个项目”，选择资料，进行原理导读与零基础问答。实现及后续批次见 [项目陪学方案](dsh-workbench/docs/project-learning.md)。已支持个性化学习计划、逐课讲解与复述反馈、学习副本编辑，以及 Markdown / 离线 HTML / ZIP 学习资料。练习不自动执行代码，模型反馈不等于测试通过。
+
+教学优化第一批增加步骤式陪学与可纠正的学员观察，进度见 [教学架构与分批记录](dsh-workbench/docs/teaching-architecture.md)。
 
 ## 仓库结构
 
@@ -74,7 +76,7 @@ npm run check
 npm test
 ```
 
-当前包含 184 项自动化测试。界面截图来自开发验证；测试不等于所有模型、部署方式及多人场景均已验证。
+当前包含 190 项自动化测试。界面截图来自开发验证；测试不等于所有模型、部署方式及多人场景均已验证。
 
 ## 数据与使用范围
 

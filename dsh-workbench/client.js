@@ -6031,6 +6031,11 @@ ${text.trim().slice(0, 20_000)}
       const [planMinutes,setPlanMinutes]=React.useState(20);
       const [lessonId,setLessonId]=React.useState('');
       const [reflecting,setReflecting]=React.useState(false);
+      const [answering,setAnswering]=React.useState(false);
+      const [correcting,setCorrecting]=React.useState('');
+      const coach=learning.coach;
+      const coachWaiting=coach && !coach.paused && ['diagnostic','practice','transfer'].includes(coach.step);
+      const coachAction=async(action,extra={})=>mutate({action,coachId:coach.id,step:coach.step,paths,...extra});
       const plan=learning.plan;
       const lesson=plan?.lessons.find(l=>l.id===lessonId) || plan?.lessons.find(l=>l.status!=='self-checked') || plan?.lessons[0];
       React.useEffect(()=>{setLessonId('');setReflecting(false);},[plan?.id]);
@@ -6040,6 +6045,8 @@ ${text.trim().slice(0, 20_000)}
       const send=async text=>{
         if(planStep===1){if(!text.trim())return;setPlanGoal(text.trim());setDraft('');setPlanStep(2);return;}
         if(planStep)return;
+        if(correcting){if(await mutate({action:'learning-observation-correct',observationId:correcting,text})){setCorrecting('');setDraft('');}return;}
+        if(answering && coachWaiting){if(await coachAction('learning-coach-answer',{text})){setDraft('');}return;}
         if(await mutate({action:reflecting?'learning-reflect':'learn',text,paths,...(reflecting?{planId:plan.id,lessonId:lesson.id}:{})})){setDraft('');setReflecting(false);}
       };
       const catalog=[...new Set([...(learning.catalog?.files || []),...paths])];
@@ -6069,8 +6076,21 @@ ${text.trim().slice(0, 20_000)}
           h('details',null,h('summary',null,'看看知识地图'),h('ul',null,plan.map.map((topic,i)=>h('li',{key:i},topic)))),
           h('div',{className:'dshpm-starters','aria-label':'课程目录'},plan.lessons.map((l,i)=>h(Button,{key:l.id,'aria-pressed':lesson?.id===l.id,onClick:()=>{setLessonId(l.id);setReflecting(false);}},`${i+1}. ${l.title} · ${{unread:'未读',read:'已阅读','self-checked':'自评理解'}[l.status]}`))),
           lesson?h('div',{className:'dshpm-notice'},h('strong',null,lesson.title),h('p',null,lesson.objective),h('p',{className:'dshwb-hint'},`建议 ${lesson.minutes} 分钟 · ${lesson.sourceIds.length?'按计划资料学习':'待补项目资料，先学通用知识'}`),
-            h('div',{className:'dshpm-starters'},h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>mutate({action:'learning-lesson',planId:plan.id,lessonId:lesson.id,paths})},'讲解这一课'),h(Button,{disabled:locked || lesson.status!=='unread',disabledReason:locked?reason:'这一课已经标记过阅读。',onClick:()=>mutate({action:'learning-progress',planId:plan.id,lessonId:lesson.id,status:'read'})},'我已阅读'),h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>{setReflecting(true);setDraft('');}},'我来复述'),h(Button,{disabled:locked || lesson.status==='unread' || !lesson.reflectedAt || lesson.status==='self-checked',disabledReason:locked?reason:lesson.status==='self-checked'?'已记录你的自评。':'请先标记已阅读并完成一次复述。',onClick:()=>mutate({action:'learning-progress',planId:plan.id,lessonId:lesson.id,status:'self-checked'})},'我能讲清楚了')),
+            h('div',{className:'dshpm-starters'},h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:async()=>{if(await mutate({action:'learning-lesson',planId:plan.id,lessonId:lesson.id,paths})){setAnswering(true);setReflecting(false);}}},'讲解这一课'),h(Button,{disabled:locked || lesson.status!=='unread',disabledReason:locked?reason:'这一课已经标记过阅读。',onClick:()=>mutate({action:'learning-progress',planId:plan.id,lessonId:lesson.id,status:'read'})},'我已阅读'),h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>{setReflecting(true);setDraft('');}},'我来复述'),h(Button,{disabled:locked || lesson.status==='unread' || !lesson.reflectedAt || lesson.status==='self-checked',disabledReason:locked?reason:lesson.status==='self-checked'?'已记录你的自评。':'请先标记已阅读并完成一次复述。',onClick:()=>mutate({action:'learning-progress',planId:plan.id,lessonId:lesson.id,status:'self-checked'})},'我能讲清楚了')),
             h('p',{className:'dshwb-hint'},'自评理解由你主动记录，模型反馈和阅读次数不等于已经掌握。')):null):null,
+        coach?h('section',{key:'coach',className:'dshpm-notice','aria-label':'当前陪学步骤'},[
+          h('strong',{key:'title'},coach.title+' · '+({diagnostic:'先聊聊你的理解',explain:'一起理解',practice:'试着解释或预测',feedback:'看看反馈',transfer:'换个场景试试',review:'回顾与下次安排'})[coach.step]),
+          h('p',{key:'hint'},coach.paused?'这节课已暂停，进度保留。':'一次学一点。可以回答、跳过，也可以随时先问一个问题。'),
+          h('div',{key:'actions',className:'dshpm-starters'},[
+            coach.paused?h(Button,{key:'resume',disabled:locked,disabledReason:reason,onClick:()=>mutate({action:'learning-coach-pause',coachId:coach.id,paused:false})},'接着上次学'):h(Button,{key:'pause',disabled:locked,disabledReason:reason,onClick:()=>mutate({action:'learning-coach-pause',coachId:coach.id,paused:true})},'先暂停这节课'),
+            !coach.paused && coachWaiting?h(Button,{key:'answer',disabled:locked,disabledReason:reason,onClick:()=>{setAnswering(true);setReflecting(false);setCorrecting('');}},'回答这一步'):null,
+            !coach.paused && coachWaiting?h(Button,{key:'skip',disabled:locked || !data.available,disabledReason:reason,onClick:()=>coachAction('learning-coach-skip')},'跳过这道题'):null,
+            !coach.paused && ['explain','feedback'].includes(coach.step)?h(Button,{key:'next',disabled:locked || !data.available,disabledReason:reason,onClick:async()=>{if(await coachAction('learning-coach-next'))setAnswering(true);}},'继续下一步'):null,
+            !coach.paused?h('details',{key:'help'},h('summary',null,'需要帮助'),h('div',{className:'dshpm-starters'},[['simplify','再简单一点'],['hint','给我一点提示'],['example','换个例子'],['complete','看完整示例']].map(([variant,label])=>h(Button,{key:variant,disabled:locked || !data.available,disabledReason:reason,onClick:()=>coachAction('learning-coach-help',{variant})},label)))):null,
+            h(Button,{key:'ask',onClick:()=>{setAnswering(false);setReflecting(false);setCorrecting('');}},'先问个问题')
+          ])
+        ]):null,
+        learning.observations?.length?h('details',{key:'learner'},h('summary',null,'管家对我学习情况的观察（可纠正）'),h('p',null,'这些是依据回答作出的暂时判断，不是能力评分。'),...learning.observations.slice(-8).reverse().map(o=>h('article',{key:o.id,className:'dshpm-notice'},h('strong',null,o.title),h('p',null,o.corrected?'你已纠正：'+o.correction:'暂时观察 · '+(o.certainty==='supported'?'有回答依据':'仍不确定')),h('ul',null,[...o.understood.map(v=>['已观察到',v]),...o.misconceptions.map(v=>['待澄清',v])].map(([label,v],i)=>h('li',{key:i},`${label}：${v.claim}；你的原话：“${v.quote}”`))),h('p',null,'建议：'+o.next),h(Button,{disabled:locked || o.corrected,disabledReason:locked?reason:'这条观察已经纠正。',onClick:()=>{setCorrecting(o.id);setAnswering(false);setReflecting(false);setDraft('');}},'纠正这条观察')))):null,
         reflecting?h('p',{key:'reflection',role:'status'},`试着用自己的话回答：${lesson.question}`):null,
         h('details',{key:'materials',className:'dshpm-learningMaterials'},h('summary',null,'我的学习资料'),
           h('p',null,'整理项目原理导读、术语词典、计划和问答记录，可以下载到电脑继续阅读。'),
@@ -6094,7 +6114,7 @@ ${text.trim().slice(0, 20_000)}
         task?h('div',{key:'progress',role:'status'},h('p',null,task.kind==='learning'?'管家正在准备讲解…':'开发任务正在处理，可先阅读学习记录。'),task.error?h('p',null,task.error):null,task.sessionId?h(Button,{onClick:()=>openSession(task.sessionId)},'查看处理详情'):null,h(Button,{disabled:!data.available || task.status==='cancelling',disabledReason:!data.available?'执行服务尚未连接。':'已请求停止，请等待结束。',onClick:()=>mutate({action:task.status==='uncertain'?'recheck':'cancel'})},task.status==='uncertain'?'重新检查状态':'停止当前任务')):null,
         !task && data.jobs.at(-1)?.kind==='learning' && ['failed','uncertain','cancelled'].includes(data.jobs.at(-1)?.status)?h('p',{key:'failure',role:'alert'},data.jobs.at(-1).error || '本次学习已停止，可以重新提问。'):null,
         h('div',{key:'starters',className:'dshpm-starters'},[['原理导读','请根据所选资料，带我从零认识这个产品：用途、主要组成和一条操作流程。'],['换个生活例子','我没有听懂刚才的解释，请用更简单的生活例子重新讲。'],['看看设计思路','请解释所选资料能证明的设计思路和取舍，缺少依据的部分请明确说明。']].map(([label,text])=>h(Button,{key:label,disabled:locked || !data.available,disabledReason:reason,onClick:()=>setDraft(text)},label))),
-        h('form',{key:'composer',className:'dshpm-composer',onSubmit:e=>{e.preventDefault();send(draft);}},h('label',null,planStep===1?'你希望学到什么程度？':reflecting?'用自己的话讲讲看':'你想弄懂什么？',h('textarea',{className:'dshwb-input',rows:2,value:draft,maxLength:8000,onChange:e=>setDraft(e.target.value),placeholder:'不用担心问得简单，直接说哪里不明白。'})),h(Button,{type:'submit',kind:'primary',disabled:locked || !data.available || !draft.trim() || planStep>1,disabledReason:planStep>1?'请先回答上面的学习安排问题。':!draft.trim()?'请先填写想了解的问题。':reason},planStep===1?'继续安排':reflecting?'请管家看看我的理解':'请管家讲解'))
+        h('form',{key:'composer',className:'dshpm-composer',onSubmit:e=>{e.preventDefault();send(draft);}},h('label',null,planStep===1?'你希望学到什么程度？':correcting?'请说明你希望纠正什么':answering && coachWaiting?'说说你对这一步的理解':reflecting?'用自己的话讲讲看':'你想弄懂什么？',h('textarea',{className:'dshwb-input',rows:2,value:draft,maxLength:8000,onChange:e=>setDraft(e.target.value),placeholder:'不用担心问得简单，直接说哪里不明白。'})),h(Button,{type:'submit',kind:'primary',disabled:locked || !data.available || !draft.trim() || planStep>1,disabledReason:planStep>1?'请先回答上面的学习安排问题。':!draft.trim()?'请先填写想了解的问题。':reason},planStep===1?'继续安排':correcting?'保存纠正':answering && coachWaiting?'提交这一步的回答':reflecting?'请管家看看我的理解':'请管家讲解'))
       ]);
     }
 

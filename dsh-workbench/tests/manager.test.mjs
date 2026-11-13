@@ -407,3 +407,27 @@ test('long learning histories are archived and included in exports instead of di
  const exported=await f.call({action:'learning-export',format:'markdown'});
  const text=await readFile(join(f.root,exported.learning.export.path),'utf8');assert.ok(text.includes('归档问题-0'));assert.ok(text.includes('归档问题-154'));
 });
+
+test('guided teaching stores evidence-bound observations and resumes after restart without touching development',async()=>{
+ const f=await fixture();
+ await f.call({action:'learning-plan',goal:'理解产品',level:'zero',minutes:20,paths:[]});await f.service().tick();
+ await f.finish(JSON.stringify({version:2,blocks:[{type:'summary',text:'先学习接口。'}],plan:{title:'学习产品',map:[],lessons:Array.from({length:3},(_,i)=>({title:'接口'+i,objective:'理解请求',question:'接口是什么',minutes:10,sourceIds:[]}))}}));
+ const plan=(await f.view()).learning.plan;
+ await f.call({action:'learning-lesson',planId:plan.id,lessonId:plan.lessons[0].id,paths:[]});await f.service().tick();await f.finish('先说说你觉得接口负责什么？');
+ let coach=(await f.view()).learning.coach;
+ await f.call({action:'learning-coach-answer',coachId:coach.id,step:coach.step,text:'接口是数据库',paths:[]});await f.service().tick();
+ await f.finish(JSON.stringify({reply:'我们先区分传递请求和保存数据。',assessment:{understood:[],misconceptions:[{claim:'把接口等同于存储',quote:'数据库'}],certainty:'tentative',next:'用预约单举例'}}));
+ let v=await f.view();assert.equal(v.learning.coach.step,'explain');assert.equal(v.learning.observations.length,1);assert.equal(v.messages.length,0);assert.equal(v.proposal,null);
+ await f.call({action:'learning-observation-correct',observationId:v.learning.observations[0].id,text:'我在举例，请先帮我区分。'});
+ await f.call({action:'learning-coach-pause',coachId:coach.id,paused:true});await f.restart();assert.equal((await f.view()).learning.coach.paused,true);
+ await f.call({action:'learning-coach-pause',coachId:coach.id,paused:false});assert.equal((await f.view()).learning.coach.id,coach.id);
+});
+
+test('invented student quotes fail without changing learner state',async()=>{
+ const f=await fixture();await f.call({action:'learning-sources'});
+ const path=await managedPath(f.root,`.dsh/workbench/changes/${f.id}/manager.json`);const doc=JSON.parse(await readFile(path,'utf8'));
+ doc.learning.coach={id:'coach',step:'diagnostic',title:'接口',conceptId:'c',paused:false};await writeFile(path,JSON.stringify(doc));
+ await f.call({action:'learning-coach-answer',coachId:'coach',step:'diagnostic',text:'我不知道',paths:[]});await f.service().tick();
+ await f.finish(JSON.stringify({reply:'解释',assessment:{understood:[{claim:'理解接口',quote:'我已经明白'}],misconceptions:[],certainty:'supported',next:'继续'}}));
+ const v=await f.view();assert.equal(v.jobs.at(-1).status,'failed');assert.equal(v.learning.coach.step,'diagnostic');assert.equal(v.learning.observations,undefined);
+});
