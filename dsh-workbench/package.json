@@ -1,6 +1,6 @@
 {
   "name": "dsh-workbench",
-  "version": "1.19.0",
+  "version": "1.20.0",
   "private": true,
   "description": "A product development workbench with versioned document review, traceable project knowledge and inspectable stage context",
   "type": "module",
@@ -33,7 +33,8 @@
     "docs/*.svg",
     "scripts/build-manager-guide.mjs",
     "manager-presentation.js",
-    "learning.js"
+    "learning.js",
+    "learning-plan.js"
   ],
   "dsh": {
     "bundle": {
@@ -47,7 +48,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check templates.js && node --check client.js && node --check manager.js && node --check manager-adapter.js && node --check execution-policy.js && node --check manager-message.js && node --check delivery-plan.js && node --check delivery-export.js && node --check manager-presentation.js && node --check learning.js",
+    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check templates.js && node --check client.js && node --check manager.js && node --check manager-adapter.js && node --check execution-policy.js && node --check manager-message.js && node --check delivery-plan.js && node --check delivery-export.js && node --check manager-presentation.js && node --check learning.js && node --check learning-plan.js",
     "docs:guide": "node scripts/build-manager-guide.mjs"
   },
   "dependencies": {

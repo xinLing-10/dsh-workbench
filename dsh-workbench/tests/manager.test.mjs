@@ -339,3 +339,26 @@ test('learning preserves existing development proposal and survives supervisor r
  assert.equal((await f.view()).proposal.id,p.id);
  assert.equal((await f.view()).learning.messages.length,2);
 });
+
+test('learning plans have independent progress and reflection never automatically marks mastery',async()=>{
+ const f=await fixture();
+ await f.call({action:'learning-plan',goal:'了解原理',level:'zero',minutes:20,paths:[]});await f.service().tick();
+ const raw={version:2,blocks:[{type:'summary',text:'按每天20分钟学习，项目资料尚待补充。'}],proposal:null,plan:{title:'从零了解产品',map:['产品用途','技术基础'],lessons:Array.from({length:3},(_,i)=>({title:'主题'+i,objective:'说清这个概念',question:'用自己的话解释',minutes:10,sourceIds:[]}))}};
+ await f.finish(JSON.stringify(raw));const plan=(await f.view()).learning.plan;
+ const body={planId:plan.id,lessonId:plan.lessons[0].id};
+ await assert.rejects(f.call({action:'learning-progress',...body,status:'self-checked'}));
+ await f.call({action:'learning-progress',...body,status:'read'});
+ await f.call({action:'learning-reflect',...body,text:'这是我的理解',paths:[]});await f.service().tick();await f.finish('你讲清了产品目标，可以再想一想数据如何保存。');
+ assert.equal((await f.view()).learning.plan.lessons[0].status,'read');
+ await f.call({action:'learning-progress',...body,status:'self-checked'});assert.equal((await f.view()).learning.plan.lessons[0].status,'self-checked');
+ await f.restart();assert.equal((await f.view()).learning.plan.id,plan.id);assert.equal((await f.view()).messages.length,0);
+});
+
+test('replanning archives the previous plan and stale course operations are rejected',async()=>{
+ const f=await fixture();
+ const raw={version:2,blocks:[{type:'summary',text:'通用基础计划'}],plan:{title:'基础',map:[],lessons:Array.from({length:3},(_,i)=>({title:'课'+i,objective:'理解概念',question:'说说你的理解',minutes:5,sourceIds:[]}))}};
+ async function plan(){await f.call({action:'learning-plan',goal:'理解产品',level:'zero',minutes:10,paths:[]});await f.service().tick();await f.finish(JSON.stringify(raw));return (await f.view()).learning.plan;}
+ const old=await plan();await plan();
+ const result=await f.view();assert.equal(result.learning.previousPlans[0].id,old.id);
+ await assert.rejects(f.call({action:'learning-lesson',planId:old.id,lessonId:old.lessons[0].id,paths:[]}),/已变化/);
+});

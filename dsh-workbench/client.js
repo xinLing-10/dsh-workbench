@@ -6018,10 +6018,23 @@ ${text.trim().slice(0, 20_000)}
       const [paths,setPaths]=React.useState(()=>{try{const saved=JSON.parse(localStorage.getItem(storageKey+':paths') || 'null');return Array.isArray(saved)?saved.filter(p=>typeof p==='string').slice(0,12):(learning.paths || []);}catch{return learning.paths || [];}});
       React.useEffect(()=>{try{localStorage.setItem(storageKey+':draft',draft);localStorage.setItem(storageKey+':paths',JSON.stringify(paths));}catch{}},[draft,paths,storageKey]);
       const [sourcesOpen,setSourcesOpen]=React.useState(false);
+      const [planStep,setPlanStep]=React.useState(0);
+      const [planGoal,setPlanGoal]=React.useState('');
+      const [planLevel,setPlanLevel]=React.useState('zero');
+      const [planMinutes,setPlanMinutes]=React.useState(20);
+      const [lessonId,setLessonId]=React.useState('');
+      const [reflecting,setReflecting]=React.useState(false);
+      const plan=learning.plan;
+      const lesson=plan?.lessons.find(l=>l.id===lessonId) || plan?.lessons.find(l=>l.status!=='self-checked') || plan?.lessons[0];
+      React.useEffect(()=>{setLessonId('');setReflecting(false);},[plan?.id]);
       const logRef=React.useRef(null);
       React.useEffect(()=>{logRef.current?.scrollTo(0,logRef.current.scrollHeight);},[learning.messages.at(-1)?.id]);
       const task=data.jobs.findLast(j=>['queued','creating','submitting','running','cancelling','uncertain'].includes(j.status));
-      const send=async text=>{if(await mutate({action:'learn',text,paths}))setDraft('');};
+      const send=async text=>{
+        if(planStep===1){if(!text.trim())return;setPlanGoal(text.trim());setDraft('');setPlanStep(2);return;}
+        if(planStep)return;
+        if(await mutate({action:reflecting?'learning-reflect':'learn',text,paths,...(reflecting?{planId:plan.id,lessonId:lesson.id}:{})})){setDraft('');setReflecting(false);}
+      };
       const catalog=[...new Set([...(learning.catalog?.files || []),...paths])];
       return h('section',{className:'dshpm-conversation dshpm-learning','aria-label':'项目陪学'},[
         h('h2',{key:'title'},'一起学懂这个项目'),
@@ -6036,6 +6049,21 @@ ${text.trim().slice(0, 20_000)}
             ...catalog.map(path=>h('label',{key:path},h('input',{type:'checkbox',checked:paths.includes(path),onChange:()=>{if(locked){showToast(reason);return;}if(paths.includes(path))setPaths(paths.filter(p=>p!==path));else if(paths.length>=12)showToast('每次最多选择 12 份资料，请先取消一份。');else setPaths([...paths,path]);}}),h('span',null,path)))
           ]):null
         ]),
+        h('div',{key:'plan-entry',className:'dshpm-starters'},h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>{setReflecting(false);setPlanStep(1);}},plan?'调整学习计划':'帮我安排学习计划')),
+        planStep?h('div',{key:'planning',className:'dshpm-notice','aria-label':'安排学习计划'},[
+          h('p',{key:'question'},planStep===1?'你希望学到什么程度？可以在下面直接告诉我。':planStep===2?'你目前接触过哪些计算机知识？':'你每天想花多少时间学习？'),
+          planStep===1?h('div',{key:'goals',className:'dshpm-starters'},['先理解产品原理','能看懂代码并自己维护'].map(goal=>h(Button,{key:goal,disabled:locked,disabledReason:reason,onClick:()=>{setPlanGoal(goal);setPlanStep(2);}},goal))):planStep===2?h('div',{key:'levels',className:'dshpm-starters'},[['zero','完全没有'],['beginner','接触过一点'],['experienced','有开发经验']].map(([level,label])=>h(Button,{key:level,disabled:locked,disabledReason:reason,onClick:()=>{setPlanLevel(level);setPlanStep(3);}},label))):h('div',{key:'minutes',className:'dshpm-starters'},[10,20,30,60].map(minutes=>h(Button,{key:minutes,disabled:locked,disabledReason:reason,onClick:()=>setPlanMinutes(minutes),'aria-pressed':planMinutes===minutes},`${minutes} 分钟`)),h(Button,{kind:'primary',disabled:locked || !data.available,disabledReason:reason,onClick:async()=>{if(await mutate({action:'learning-plan',goal:planGoal,level:planLevel,minutes:planMinutes,paths})){setPlanStep(0);setDraft('');}}},'请管家安排')),
+          h(Button,{key:'cancel',onClick:()=>setPlanStep(0)},'暂时不安排')
+        ]):null,
+        plan?h('details',{key:'plan',className:'dshpm-learningPlan',open:true},h('summary',null,`${plan.title} · ${plan.lessons.filter(l=>l.status==='self-checked').length}/${plan.lessons.length} 课自评理解`),
+          h('p',null,`每天 ${plan.profile.minutes} 分钟 · ${plan.profile.goal}`),
+          learning.sourceChanges?.length?h('p',{role:'status'},'部分计划资料已变化或本轮未提供，请重新选择资料或调整计划：'+learning.sourceChanges.join('、')):null,
+          h('details',null,h('summary',null,'看看知识地图'),h('ul',null,plan.map.map((topic,i)=>h('li',{key:i},topic)))),
+          h('div',{className:'dshpm-starters','aria-label':'课程目录'},plan.lessons.map((l,i)=>h(Button,{key:l.id,'aria-pressed':lesson?.id===l.id,onClick:()=>{setLessonId(l.id);setReflecting(false);}},`${i+1}. ${l.title} · ${{unread:'未读',read:'已阅读','self-checked':'自评理解'}[l.status]}`))),
+          lesson?h('div',{className:'dshpm-notice'},h('strong',null,lesson.title),h('p',null,lesson.objective),h('p',{className:'dshwb-hint'},`建议 ${lesson.minutes} 分钟 · ${lesson.sourceIds.length?'按计划资料学习':'待补项目资料，先学通用知识'}`),
+            h('div',{className:'dshpm-starters'},h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>mutate({action:'learning-lesson',planId:plan.id,lessonId:lesson.id,paths})},'讲解这一课'),h(Button,{disabled:locked || lesson.status!=='unread',disabledReason:locked?reason:'这一课已经标记过阅读。',onClick:()=>mutate({action:'learning-progress',planId:plan.id,lessonId:lesson.id,status:'read'})},'我已阅读'),h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>{setReflecting(true);setDraft('');}},'我来复述'),h(Button,{disabled:locked || lesson.status==='unread' || !lesson.reflectedAt || lesson.status==='self-checked',disabledReason:locked?reason:lesson.status==='self-checked'?'已记录你的自评。':'请先标记已阅读并完成一次复述。',onClick:()=>mutate({action:'learning-progress',planId:plan.id,lessonId:lesson.id,status:'self-checked'})},'我能讲清楚了')),
+            h('p',{className:'dshwb-hint'},'自评理解由你主动记录，模型反馈和阅读次数不等于已经掌握。')):null):null,
+        reflecting?h('p',{key:'reflection',role:'status'},`试着用自己的话回答：${lesson.question}`):null,
         h('div',{key:'log',ref:logRef,className:'dshpm-messages',role:'log','aria-label':'项目陪学对话'},learning.messages.length?learning.messages.map(m=>h('div',{key:m.id},[
           h(ManagerMessage,{key:'message',message:m,locked:true,lockedReason:'学习问题请直接在下方输入。'}),
           m.evidence?h('details',{key:'evidence',className:'dshpm-learningEvidence'},h('summary',null,'本轮资料与缺口'),h('p',null,'这是该次讲解收到的资料快照，不代表每条结论都已验证；项目更新后请重新提问。'),h('ul',null,m.evidence.sources.map(source=>h('li',{key:source.id},`${source.id} · ${source.path} · 1–${source.lines} 行 · ${source.hash.slice(0,12)}${source.truncated?' · 部分摘录':''}`))),...m.evidence.gaps.map((gap,i)=>h('p',{key:i},gap))):null
@@ -6043,7 +6071,7 @@ ${text.trim().slice(0, 20_000)}
         task?h('div',{key:'progress',role:'status'},h('p',null,task.kind==='learning'?'管家正在准备讲解…':'开发任务正在处理，可先阅读学习记录。'),task.error?h('p',null,task.error):null,task.sessionId?h(Button,{onClick:()=>openSession(task.sessionId)},'查看处理详情'):null,h(Button,{disabled:!data.available || task.status==='cancelling',disabledReason:!data.available?'执行服务尚未连接。':'已请求停止，请等待结束。',onClick:()=>mutate({action:task.status==='uncertain'?'recheck':'cancel'})},task.status==='uncertain'?'重新检查状态':'停止当前任务')):null,
         !task && data.jobs.at(-1)?.kind==='learning' && ['failed','uncertain','cancelled'].includes(data.jobs.at(-1)?.status)?h('p',{key:'failure',role:'alert'},data.jobs.at(-1).error || '本次学习已停止，可以重新提问。'):null,
         h('div',{key:'starters',className:'dshpm-starters'},[['原理导读','请根据所选资料，带我从零认识这个产品：用途、主要组成和一条操作流程。'],['换个生活例子','我没有听懂刚才的解释，请用更简单的生活例子重新讲。'],['看看设计思路','请解释所选资料能证明的设计思路和取舍，缺少依据的部分请明确说明。']].map(([label,text])=>h(Button,{key:label,disabled:locked || !data.available,disabledReason:reason,onClick:()=>setDraft(text)},label))),
-        h('form',{key:'composer',className:'dshpm-composer',onSubmit:e=>{e.preventDefault();send(draft);}},h('label',null,'你想弄懂什么？',h('textarea',{className:'dshwb-input',rows:2,value:draft,maxLength:8000,onChange:e=>setDraft(e.target.value),placeholder:'不用担心问得简单，直接说哪里不明白。'})),h(Button,{type:'submit',kind:'primary',disabled:locked || !data.available || !draft.trim(),disabledReason:!draft.trim()?'请先填写想了解的问题。':reason},'请管家讲解'))
+        h('form',{key:'composer',className:'dshpm-composer',onSubmit:e=>{e.preventDefault();send(draft);}},h('label',null,planStep===1?'你希望学到什么程度？':reflecting?'用自己的话讲讲看':'你想弄懂什么？',h('textarea',{className:'dshwb-input',rows:2,value:draft,maxLength:8000,onChange:e=>setDraft(e.target.value),placeholder:'不用担心问得简单，直接说哪里不明白。'})),h(Button,{type:'submit',kind:'primary',disabled:locked || !data.available || !draft.trim() || planStep>1,disabledReason:planStep>1?'请先回答上面的学习安排问题。':!draft.trim()?'请先填写想了解的问题。':reason},planStep===1?'继续安排':reflecting?'请管家看看我的理解':'请管家讲解'))
       ]);
     }
 
