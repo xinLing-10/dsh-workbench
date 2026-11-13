@@ -60,7 +60,7 @@ sh -n deploy/entrypoint.sh
 node --check deploy/healthcheck.mjs
 ```
 
-部署包和配置准备不代表真实服务器上线完成；实际状态与阻塞项记录在 [部署准备记录](deploy/preparation-status.md)。
+已在真实 ECS 完成一个 `owner` 实例的私有部署验证：认证、管家接口、中文 PDF、可编辑 PPTX 和重启持久化通过。当前通过本机 SSH 隧道访问，尚未开放公网；模型配置及真实模型任务待验证。实际状态与验收边界见 [部署验证记录](deploy/preparation-status.md)。
 
 ## 验证
 
