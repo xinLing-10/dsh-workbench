@@ -362,3 +362,48 @@ test('replanning archives the previous plan and stale course operations are reje
  const result=await f.view();assert.equal(result.learning.previousPlans[0].id,old.id);
  await assert.rejects(f.call({action:'learning-lesson',planId:old.id,lessonId:old.lessons[0].id,paths:[]}),/已变化/);
 });
+
+test('learning materials are validated and all three exports contain readable records',async()=>{
+ const f=await fixture();await writeFile(join(f.root,'README.md'),'# 工具\n用户提交请求。');
+ await f.call({action:'learning-materials',paths:['README.md']});await f.service().tick();
+ await f.finish(JSON.stringify({version:2,blocks:[{type:'summary',text:'学习资料已整理。'}],materials:{overview:'# 工作原理\n\n接收用户请求。[S1:L1-L2]',glossary:[{term:'请求',meaning:'告诉工具希望做什么。',sourceIds:['S1']}]}}));
+ assert.equal((await f.view()).learning.materials.glossary[0].term,'请求');
+ for(const format of ['markdown','html','zip']) {
+  const result=await f.call({action:'learning-export',format});const bytes=await readFile(join(f.root,result.learning.export.path));
+  assert.ok(bytes.length>100);
+  if(format==='zip'){assert.equal(bytes.readUInt32LE(),0x04034b50);assert.ok(bytes.includes(Buffer.from('资料版本清单.json')));}
+  else assert.ok(bytes.toString().includes('工作原理'));
+ }
+ assert.equal((await f.view()).messages.length,0);assert.equal((await f.view()).proposal,null);
+});
+
+test('practice copy workflow is read-only for original project and feedback cannot create work',async()=>{
+ const f=await fixture();await writeFile(join(f.root,'app.js'),'export const text = "old";');
+ const created=await f.call({action:'learning-practice-create',confirmed:true,paths:['app.js'],goal:'修改提示文字'});
+ const body={practiceId:created.learning.practice.id,path:'app.js'};
+ const opened=await f.call({action:'learning-practice-open',...body});
+ await f.call({action:'learning-practice-save',...body,baseHash:opened.learning.editor.hash,content:'export const text = "new";'});
+ await f.call({action:'learning-practice-feedback',...body});await f.service().tick();
+ assert.match(f.submits.at(-1).prompt,/没有运行代码/);assert.match(f.submits.at(-1).prompt,/new/);
+ await f.finish(JSON.stringify({reply:'副本中的提示已改变，尚未运行测试。',proposal:{stage:'build',instruction:'改原项目'}}));
+ assert.equal(await readFile(join(f.root,'app.js'),'utf8'),'export const text = "old";');
+ assert.equal((await f.view()).proposal,null);assert.equal((await f.view()).messages.length,0);
+});
+
+test('malformed learning material results fail without replacing existing material or creating work',async()=>{
+ const f=await fixture();await f.call({action:'learning-materials',paths:[]});await f.service().tick();
+ await f.finish(JSON.stringify({version:2,blocks:[{type:'summary',text:'资料'}],materials:{overview:'bad',glossary:[{term:'接口',meaning:'解释',sourceIds:['S999']}]}}));
+ const result=await f.view();assert.equal(result.jobs.at(-1).status,'failed');assert.equal(result.learning.materials,undefined);assert.equal(result.messages.length,0);
+});
+
+
+test('long learning histories are archived and included in exports instead of discarded',async()=>{
+ const f=await fixture();await f.call({action:'learning-sources'});
+ const file=await managedPath(f.root,`.dsh/workbench/changes/${f.id}/manager.json`);
+ const doc=JSON.parse(await readFile(file,'utf8'));
+ doc.learning.messages=Array.from({length:155},(_,i)=>({id:'history-'+i,role:i%2?'assistant':'user',text:'归档问题-'+i,time:new Date().toISOString()}));
+ await writeFile(file,JSON.stringify(doc));
+ const archived=await f.call({action:'learning-sources'});assert.equal(archived.learning.messages.length,100);assert.equal(archived.learning.archives[0].count,55);
+ const exported=await f.call({action:'learning-export',format:'markdown'});
+ const text=await readFile(join(f.root,exported.learning.export.path),'utf8');assert.ok(text.includes('归档问题-0'));assert.ok(text.includes('归档问题-154'));
+});

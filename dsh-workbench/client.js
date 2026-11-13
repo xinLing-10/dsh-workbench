@@ -6012,12 +6012,19 @@ ${text.trim().slice(0, 20_000)}
       ]);
     }
 
-    function ManagerLearning({data,locked,reason,mutate,showToast,storageKey,openSession}) {
+    function ManagerLearning({data,locked,reason,mutate,showToast,storageKey,openSession,download}) {
       const learning=data.learning || {messages:[],paths:[]};
       const [draft,setDraft]=React.useState(()=>{try{return localStorage.getItem(storageKey+':draft') || '';}catch{return '';}});
       const [paths,setPaths]=React.useState(()=>{try{const saved=JSON.parse(localStorage.getItem(storageKey+':paths') || 'null');return Array.isArray(saved)?saved.filter(p=>typeof p==='string').slice(0,12):(learning.paths || []);}catch{return learning.paths || [];}});
       React.useEffect(()=>{try{localStorage.setItem(storageKey+':draft',draft);localStorage.setItem(storageKey+':paths',JSON.stringify(paths));}catch{}},[draft,paths,storageKey]);
       const [sourcesOpen,setSourcesOpen]=React.useState(false);
+      const [practiceConfirmed,setPracticeConfirmed]=React.useState(false);
+      const [practiceCode,setPracticeCode]=React.useState('');
+      const editor=learning.editor;
+      const practice=learning.practice;
+      const practiceDraftKey=editor?storageKey+':practice:'+practice?.id+':'+editor.path+':'+editor.hash:'';
+      React.useEffect(()=>{if(!editor)return;try{const cached=localStorage.getItem(practiceDraftKey);setPracticeCode(cached===null?editor.content:cached);}catch{setPracticeCode(editor.content);}},[practiceDraftKey]);
+      React.useEffect(()=>{if(practiceDraftKey)try{localStorage.setItem(practiceDraftKey,practiceCode);}catch{}},[practiceCode,practiceDraftKey]);
       const [planStep,setPlanStep]=React.useState(0);
       const [planGoal,setPlanGoal]=React.useState('');
       const [planLevel,setPlanLevel]=React.useState('zero');
@@ -6044,6 +6051,7 @@ ${text.trim().slice(0, 20_000)}
           h('p',{key:'notice',className:'dshwb-hint'},'只有发送问题时才会把选中内容交给当前配置的模型服务。请先确认不含个人资料、密钥或商业敏感内容。未选资料时只能讲通用知识。'),
           sourcesOpen?h('div',{key:'picker',className:'dshpm-sourcePicker'},[
             h('p',{key:'help'},'先选项目说明和一个功能的源码即可，最多 12 份。不会自动把整个项目发给模型。'),
+            h(Button,{key:'recommended',disabled:locked || !catalog.some(p=>/(^|\/)(readme[^/]*\.md|package\.json|pyproject\.toml)$/i.test(p)),disabledReason:locked?reason:'没有找到项目说明，请从下面选择资料。',onClick:()=>setPaths(catalog.filter(p=>/(^|\/)(readme[^/]*\.md|package\.json|pyproject\.toml)$/i.test(p)).slice(0,4))},'先选项目说明和技术清单'),
             learning.catalog?.limited?h('p',{key:'limit',role:'status'},'目录较大，只列出部分资料；可先从项目说明开始。'):null,
             !catalog.length?h('p',{key:'empty'},'没有找到适合的文本资料。请确认已选择业务项目文件夹。'):null,
             ...catalog.map(path=>h('label',{key:path},h('input',{type:'checkbox',checked:paths.includes(path),onChange:()=>{if(locked){showToast(reason);return;}if(paths.includes(path))setPaths(paths.filter(p=>p!==path));else if(paths.length>=12)showToast('每次最多选择 12 份资料，请先取消一份。');else setPaths([...paths,path]);}}),h('span',null,path)))
@@ -6064,6 +6072,21 @@ ${text.trim().slice(0, 20_000)}
             h('div',{className:'dshpm-starters'},h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>mutate({action:'learning-lesson',planId:plan.id,lessonId:lesson.id,paths})},'讲解这一课'),h(Button,{disabled:locked || lesson.status!=='unread',disabledReason:locked?reason:'这一课已经标记过阅读。',onClick:()=>mutate({action:'learning-progress',planId:plan.id,lessonId:lesson.id,status:'read'})},'我已阅读'),h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>{setReflecting(true);setDraft('');}},'我来复述'),h(Button,{disabled:locked || lesson.status==='unread' || !lesson.reflectedAt || lesson.status==='self-checked',disabledReason:locked?reason:lesson.status==='self-checked'?'已记录你的自评。':'请先标记已阅读并完成一次复述。',onClick:()=>mutate({action:'learning-progress',planId:plan.id,lessonId:lesson.id,status:'self-checked'})},'我能讲清楚了')),
             h('p',{className:'dshwb-hint'},'自评理解由你主动记录，模型反馈和阅读次数不等于已经掌握。')):null):null,
         reflecting?h('p',{key:'reflection',role:'status'},`试着用自己的话回答：${lesson.question}`):null,
+        h('details',{key:'materials',className:'dshpm-learningMaterials'},h('summary',null,'我的学习资料'),
+          h('p',null,'整理项目原理导读、术语词典、计划和问答记录，可以下载到电脑继续阅读。'),
+          h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>mutate({action:'learning-materials',paths})},'整理学习资料'),
+          learning.materialChanges?.length?h('p',{role:'status'},'学习资料来源已变化或本轮未提供，请重新整理后再下载。'):null,
+          learning.materials?h('div',null,h(MessageMarkdown,{nodes:learning.materials.overviewNodes || []}),h('dl',null,learning.materials.glossary.map((g,i)=>h('div',{key:i},h('dt',null,h('strong',null,g.term)),h('dd',null,g.meaning))))):null,
+          h('div',{className:'dshpm-starters'},[['markdown','下载 Markdown'],['html','下载离线 HTML'],['zip','下载学习资料包']].map(([format,label])=>h(Button,{key:format,disabled:locked || !learning.messages.length,disabledReason:locked?reason:'请先完成一次学习问答或整理资料。',onClick:async()=>{const result=await mutate({action:'learning-export',format});if(result?.learning?.export)download(result.learning.export.path,'项目陪学资料.'+(format==='markdown'?'md':format));}},label))),
+          h('p',{className:'dshwb-hint'},'资料包含导读、词典、计划、问答、练习记录和版本清单，不含源码或模型凭据。离线 HTML 可用浏览器打印为 PDF。')),
+        h('details',{key:'practice',className:'dshpm-learningPractice'},h('summary',null,'动手练习（学习副本）'),
+          h('p',null,'只复制你选中的文件，在副本里练习解释或修改一条提示文字。它不是完整运行环境；不会执行代码或修改原项目。'),
+          h('label',null,h('input',{type:'checkbox',checked:practiceConfirmed,onChange:e=>setPracticeConfirmed(e.target.checked)}),'我确认仅创建学习副本，不执行代码'),
+          h(Button,{disabled:locked || !practiceConfirmed || !paths.length,disabledReason:locked?reason:!paths.length?'请先选择至少一份项目资料。':'请先勾选学习副本确认项。',onClick:()=>mutate({action:'learning-practice-create',confirmed:practiceConfirmed,paths,goal:lesson?.objective || '解释一个函数或修改一条提示文字，并说明原因。'})},practice?'创建新的学习副本':'创建学习副本'),
+          practice?h('div',null,h('p',null,'练习目标：'+practice.goal),h('div',{className:'dshpm-starters'},practice.files.map(file=>h(Button,{key:file.path,disabled:locked,disabledReason:reason,onClick:()=>mutate({action:'learning-practice-open',practiceId:practice.id,path:file.originalPath})},file.originalPath))),
+            editor?h('div',null,h('label',null,'编辑学习副本：'+editor.path,h('textarea',{className:'dshwb-input',rows:8,value:practiceCode,readOnly:locked || editor.content.length>16000,maxLength:16000,onChange:e=>setPracticeCode(e.target.value),style:{fontFamily:'monospace',whiteSpace:'pre',overflow:'auto'}})),h('p',{className:'dshwb-hint'},editor.content.length>16000?'文件较长，当前只读展示。可选择较小文件练习。':'只保存到学习副本；不会覆盖原文件，也不会自动运行。'),
+              h('div',{className:'dshpm-starters'},h(Button,{disabled:locked || editor.content.length>16000 || practiceCode===editor.content,disabledReason:locked?reason:editor.content.length>16000?'请选不超过16,000字符的文件练习。':'还没有修改，先在上面编辑副本。',onClick:()=>mutate({action:'learning-practice-save',practiceId:practice.id,path:editor.path,baseHash:editor.hash,content:practiceCode})},'保存学习副本'),h(Button,{disabled:locked || !data.available || practiceCode!==editor.content,disabledReason:practiceCode!==editor.content?'请先保存练习内容，再获取反馈。':reason,onClick:()=>mutate({action:'learning-practice-feedback',practiceId:practice.id,path:editor.path})},'请管家反馈练习'))):null):null),
+        learning.archives?.length?h('p',{key:'archives',className:'dshwb-hint'},`较早的 ${learning.archives.reduce((n,a)=>n+a.count,0)} 条学习记录已归档，下载学习资料可查看；页面展示最近的对话。`):null,
         h('div',{key:'log',ref:logRef,className:'dshpm-messages',role:'log','aria-label':'项目陪学对话'},learning.messages.length?learning.messages.map(m=>h('div',{key:m.id},[
           h(ManagerMessage,{key:'message',message:m,locked:true,lockedReason:'学习问题请直接在下方输入。'}),
           m.evidence?h('details',{key:'evidence',className:'dshpm-learningEvidence'},h('summary',null,'本轮资料与缺口'),h('p',null,'这是该次讲解收到的资料快照，不代表每条结论都已验证；项目更新后请重新提问。'),h('ul',null,m.evidence.sources.map(source=>h('li',{key:source.id},`${source.id} · ${source.path} · 1–${source.lines} 行 · ${source.hash.slice(0,12)}${source.truncated?' · 部分摘录':''}`))),...m.evidence.gaps.map((gap,i)=>h('p',{key:i},gap))):null
@@ -6171,7 +6194,7 @@ ${text.trim().slice(0, 20_000)}
           setData(payload); setError('');
           // Refresh host-owned board revisions before any later browser autosave.
           await store.hydrate(true);
-          return true;
+          return payload;
         } catch (err) {
           if (identityRef.current === captured) { setError(err.message); setRetry(n => n + 1); }
           return false;
@@ -6307,15 +6330,15 @@ ${text.trim().slice(0, 20_000)}
                 data.delivery ? h(Button, { kind: 'primary', onClick: () => download(data.delivery.path, '项目交付文档.zip') }, '下载交付文档包') : null) : null,
             ],
           ]):null;
-      return h('div', { className: 'dshpm-page'+(simple?' dshpm-simple':''), 'data-testid': 'personal-manager-page' }, [
-        h('style', { key: 'style' }, CSS + MANAGER_CSS + '.dshpm-learning{max-width:900px;margin:0 auto;width:100%;box-sizing:border-box}.dshpm-sourcePicker{max-height:260px;overflow:auto;padding:12px;border:1px solid var(--border-color,#7774);border-radius:10px}.dshpm-sourcePicker label{display:flex;align-items:flex-start;gap:8px;padding:6px 0;overflow-wrap:anywhere}.dshpm-sourcePicker input{flex-shrink:0}.dshpm-learningEvidence{margin:0 12px 18px;font-size:13px;overflow-wrap:anywhere}.dshpm-learning .dshpm-messages{min-height:180px;max-height:55vh}.dshpm-learningSources{padding:12px 0}'),
+      return h('div', { className: 'dshpm-page'+(simple?' dshpm-simple':'')+(learningOpen?' dshpm-learningPage':''), 'data-testid': 'personal-manager-page' }, [
+        h('style', { key: 'style' }, CSS + MANAGER_CSS + '.dshpm-page.dshpm-learningPage{overflow-y:auto;display:block}.dshpm-learningPage .dshpm-learning{display:block}.dshpm-learning{max-width:900px;margin:0 auto;width:100%;box-sizing:border-box}.dshpm-sourcePicker{max-height:260px;overflow:auto;padding:12px;border:1px solid var(--border-color,#7774);border-radius:10px}.dshpm-sourcePicker label{display:flex;align-items:flex-start;gap:8px;padding:6px 0;overflow-wrap:anywhere}.dshpm-sourcePicker input{flex-shrink:0}.dshpm-learningEvidence{margin:0 12px 18px;font-size:13px;overflow-wrap:anywhere}.dshpm-learning .dshpm-messages{min-height:180px;max-height:55vh}.dshpm-learningSources{padding:12px 0}'),
         h(Toast, { key: 'toast', toast }),
         h('header', { key: 'header', className: 'dshpm-header' }, [
           h('div', { key: 'title' }, h('p', { className: 'dshpm-eyebrow' }, '你的项目管家'), h('h1', null, state.project.name || (simple?'项目管家':'一起把想法做出来')),
-            h('p', { className: 'dshwb-hint' }, data?.complete ? '本次约定的成果已确认，可以下载文档包。' : task ? MANAGER_JOB_LABELS[task.status] : data?.contract ? `本轮：${MANAGER_STAGE_TITLES[stage] || '了解你的想法'}${simple?' · '+data.presentation.title:''}` : '和一个管家沟通，完整文档随时保留。')),
+            h('p', { className: 'dshwb-hint' }, learningOpen ? (task?.kind==='learning'?'项目陪学 · 正在准备讲解':'项目陪学 · 提问、复习或接着上次学') : data?.complete ? '本次约定的成果已确认，可以下载文档包。' : task ? MANAGER_JOB_LABELS[task.status] : data?.contract ? `本轮：${MANAGER_STAGE_TITLES[stage] || '了解你的想法'}${simple?' · '+data.presentation.title:''}` : '和一个管家沟通，完整文档随时保留。')),
           h('div', { key: 'actions', className: 'dshpm-actions' },[
-            h('div',{key:'mode',className:'dshwb-tabGroup','aria-label':'管家显示模式',role:'group'},[['simple','简洁模式'],['full','完整管家']].map(([value,label])=>h('button',{key:value,type:'button','aria-pressed':managerMode===value,onClick:()=>changeManagerMode(value)},label))),
-            simple && data?.contract?h(Button,{key:'results',onClick:()=>{setTab('documents');setSimpleResultsOpen(true);}},`我的成果 · ${data.outputs.length}`):null,
+            !learningOpen?h('div',{key:'mode',className:'dshwb-tabGroup','aria-label':'管家显示模式',role:'group'},[['simple','简洁模式'],['full','完整管家']].map(([value,label])=>h('button',{key:value,type:'button','aria-pressed':managerMode===value,onClick:()=>changeManagerMode(value)},label))):null,
+            !learningOpen && simple && data?.contract?h(Button,{key:'results',onClick:()=>{setTab('documents');setSimpleResultsOpen(true);}},`我的成果 · ${data.outputs.length}`):null,
             h(Button,{key:'learning',disabled:!data,disabledReason:'正在加载项目，请稍等。',onClick:()=>setLearningOpen(v=>!v)},learningOpen?'返回项目工作':'带我学懂这个项目'),
             h(Button,{key:'help',onClick:()=>window.open('/workbench/guide','_blank','noopener')},'使用手册'),
             h('details',{key:'more',className:'dshpm-more'},h('summary',null,'更多'),
@@ -6328,7 +6351,7 @@ ${text.trim().slice(0, 20_000)}
           h('p', null, error || meta.error || '暂时无法连接工作台，输入内容会保留。'), h(Button, { onClick: () => { setRetry(n => n + 1); store.hydrate(true); } }, '重新连接')) : null,
         !data && !error ? h('p', { key: 'loading', role: 'status' }, '正在找回你的项目…') : null,
         managerMode==='simple' && data && !supportsManagerPresentation(data.presentation)?h('p',{key:'protocol',role:'status'},'当前服务尚不支持简洁模式，暂时展示完整管家。'):null,
-        learningOpen && data ? h(ManagerLearning,{key:identity+'-learning',storageKey:'dshwb-learning:'+identity,data,locked,reason:managerReason,mutate,showToast,openSession:props.openSession}) : data && !data.contract ? h(ManagerSetup,{key:identity,name,goal,scenario,setName,setGoal,setScenario,busy,onConfigure:configure}) : data ? h('div', { key: 'layout', className: 'dshpm-layout' }, [
+        learningOpen && data ? h(ManagerLearning,{key:identity+'-learning',storageKey:'dshwb-learning:'+identity,data,locked,reason:managerReason,mutate,showToast,openSession:props.openSession,download}) : data && !data.contract ? h(ManagerSetup,{key:identity,name,goal,scenario,setName,setGoal,setScenario,busy,onConfigure:configure}) : data ? h('div', { key: 'layout', className: 'dshpm-layout' }, [
           h('section', { key: 'chat', className: 'dshpm-conversation', 'aria-label': '和管家说' }, [
             !simple?h('h2', { key: 'title' }, '和管家说'):null,
             !data.available ? h('p', { key: 'unavailable', role: 'alert' }, '管家执行服务尚未连接，请重启 DSH Host。') : null,

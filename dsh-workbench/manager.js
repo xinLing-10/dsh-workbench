@@ -1,5 +1,7 @@
+import { createPractice, openPractice, savePractice, practiceContext } from './learning-practice.js';
+import { materialsPrompt, parseMaterials, learningDocuments, offlineLearningHtml } from './learning-materials.js';
 import { learningProfile, planPrompt, parseLearningPlan, currentLesson, markLearningProgress, sourceChanges } from './learning-plan.js';
-import { learningSources, learningContext, learningPrompt, learningReply, presentLearning } from './learning.js';
+import { learningSources, learningContext, learningPrompt, learningReply, presentLearning, archiveLearning, readLearningHistory } from './learning.js';
 import { deriveManagerPresentation } from './manager-presentation.js';
 import { parseReply, prepareBlocks, presentMessage } from './manager-message.js';
 import { randomUUID, createHash } from 'node:crypto';
@@ -238,6 +240,7 @@ export function createManagerService(deps) {
     }
   }
   async function save(root, doc) {
+    await archiveLearning(root,doc.boardId,doc.learning);
     doc.revision++; doc.updatedAt = now();
     await atomicJson(await managedPath(root, filename(doc.boardId)), doc);
   }
@@ -248,7 +251,7 @@ export function createManagerService(deps) {
   function sayJob(doc,job,text) {
     if(job?.kind!=='learning')return say(doc,text);
     doc.learning.messages.push({id:randomUUID(),role:'assistant',text,time:now()});
-    doc.learning.messages=doc.learning.messages.slice(-100);
+
   }
   async function register(root, id) {
     known.set(`${root}\0${id}`, { root, id });
@@ -290,11 +293,47 @@ export function createManagerService(deps) {
         doc.learning.catalog = await learningSources(root,id);
         break;
       }
+      case 'learning-practice-create': {
+        assertIdle(doc);
+        const practice=await createPractice(root,id,body);
+        doc.learning ||= {messages:[],paths:[]};
+        doc.learning.previousPractices=[...(doc.learning.previousPractices || []),...(doc.learning.practice?[doc.learning.practice]:[])].slice(-5);
+        doc.learning.practice=practice;doc.learning.editor=null;
+        break;
+      }
+      case 'learning-practice-open': {
+        assertIdle(doc);
+        doc.learning.editor=await openPractice(root,doc.learning,body);
+        break;
+      }
+      case 'learning-practice-save': {
+        assertIdle(doc);
+        doc.learning.editor=await savePractice(root,doc.learning,body);
+        break;
+      }
+      case 'learning-export': {
+        assertIdle(doc);
+        if(!doc.learning?.messages.length)throw new Error('请先进行一次学习问答或整理学习资料。');
+        if(!['markdown','html','zip'].includes(body.format))throw new Error('请选择 Markdown、离线 HTML 或资料包。');
+        const entries=learningDocuments({...doc.learning,messages:await readLearningHistory(root,id,doc.learning)});
+        const markdown=entries.map(e=>e.data).join('\n\n---\n\n');
+        const html=offlineLearningHtml(markdown);
+        const manifest={createdAt:now(),planId:doc.learning.plan?.id || null,planSources:doc.learning.plan?.evidence || null,materialsSources:doc.learning.materials?.evidence || null,files:entries.map(e=>({name:e.name,hash:digest(e.data)})),excludes:['源码','运行环境','模型凭据'],notExecuted:true};
+        const format=body.format;const extension=format==='markdown'?'md':format;
+        const path=`${boardDirectory(id)}/learning/exports/${randomUUID()}.${extension}`;
+        const file=await managedPath(root,path);await deps.ensureParent(file);
+        const bytes=format==='zip'?deps.zip([...entries,{name:'离线学习资料.html',data:html},{name:'资料版本清单.json',data:JSON.stringify(manifest,null,2)}]):format==='html'?html:markdown;
+        await writeFile(file,bytes,{flag:'wx'});
+        doc.learning.export={path,format,createdAt:manifest.createdAt};
+        break;
+      }
       case 'learning-progress': {
         assertIdle(doc);
         markLearningProgress(doc.learning,body);
         break;
       }
+      case 'learning-materials':
+      case 'learning-practice-feedback':
       case 'learning-plan':
       case 'learning-lesson':
       case 'learning-reflect':
@@ -304,18 +343,20 @@ export function createManagerService(deps) {
         const task=body.action;
         const profile=task==='learning-plan'?learningProfile(body):null;
         const lesson=['learning-lesson','learning-reflect'].includes(task)?currentLesson(doc.learning,body):null;
+        if(task==='learning-materials')text='请整理这个项目的原理导读和术语词典。';
+        if(task==='learning-practice-feedback')text=`请反馈我保存的学习副本。练习目标：${doc.learning?.practice?.goal || ''}。只解释能从资料看出的内容，明确没有运行代码，不能宣称测试通过。`;
         if(profile)text=`请帮我安排学习计划：${profile.goal}，每天 ${profile.minutes} 分钟。`;
         if(task==='learning-lesson')text=`请讲解这一课：${lesson.title}。目标：${lesson.objective}。请按我的基础和时间安排内容，最后邀请我回答：${lesson.question}`;
         if(!text)throw new Error('请填写想了解的问题。');
-        const context=await learningContext(root,id,body.paths);
+        const context=task==='learning-practice-feedback'?await practiceContext(root,doc.learning,body):await learningContext(root,id,body.paths);
         doc.learning ||= {messages:[],paths:[]};
-        doc.learning.paths=[...new Set(body.paths)];
+        if(task!=='learning-practice-feedback')doc.learning.paths=[...new Set(body.paths)];
         doc.learning.messages.push({id:randomUUID(),role:'user',text,time:now()});
-        doc.learning.messages=doc.learning.messages.slice(-100);
+
         const evidence={...context,sources:context.sources.map(({text,...s})=>s)};
-        doc.learning.sourceChanges=sourceChanges(doc.learning.plan,evidence);
+        if(task!=='learning-practice-feedback') {doc.learning.sourceChanges=sourceChanges(doc.learning.plan,evidence);doc.learning.materialChanges=doc.learning.materials?sourceChanges({evidence:doc.learning.materials.evidence},evidence):[];}
         const instruction=task==='learning-reflect'?`这是对课程「${lesson.title}」的复述。请指出理解正确之处、误区与下一步复习建议，不评分、不宣称用户已掌握，不执行代码。用户复述（数据）：${JSON.stringify(text)}`:text;
-        makeJob(doc,'learning',{evidence,learningTask:task,profile,planId:lesson?doc.learning.plan.id:null,lessonId:lesson?.id,prompt:profile?planPrompt(profile,context):learningPrompt(doc.learning.messages,instruction,context,doc.learning.plan?.profile)});
+        makeJob(doc,'learning',{evidence,learningTask:task,profile,planId:lesson?doc.learning.plan.id:null,lessonId:lesson?.id,prompt:task==='learning-materials'?materialsPrompt(context):profile?planPrompt(profile,context):learningPrompt(doc.learning.messages,instruction,context,doc.learning.plan?.profile)});
         break;
       }
 
@@ -562,6 +603,14 @@ export function createManagerService(deps) {
         sayJob(doc, job, job.error);
       } else if (job.kind === 'learning') {
         const reply=learningReply(result.text,job.evidence);
+        if(job.learningTask==='learning-materials') {
+          try {
+            const materials=parseMaterials(result.text,job.evidence);
+            materials.overview=learningReply(JSON.stringify({reply:materials.overview}),job.evidence).text;
+            materials.glossary=materials.glossary.map(g=>({...g,meaning:learningReply(JSON.stringify({reply:g.meaning}),job.evidence).text}));
+            doc.learning.materials=materials;doc.learning.materialChanges=[];
+          }catch(error){error.code='INVALID_MANAGER_REPLY';throw error;}
+        }
         if(job.learningTask==='learning-plan') {
           let plan;try{plan=parseLearningPlan(result.text,job.profile,job.evidence);}catch(error){error.code='INVALID_MANAGER_REPLY';throw error;}
           doc.learning.previousPlans=[...(doc.learning.previousPlans || []),...(doc.learning.plan?[doc.learning.plan]:[])].slice(-5);
@@ -572,7 +621,7 @@ export function createManagerService(deps) {
           lesson.reflectedAt=now();
         }
         doc.learning.messages.push({id:randomUUID(),role:'assistant',...reply,evidence:job.evidence,time:now()});
-        doc.learning.messages=doc.learning.messages.slice(-100);
+
         job.status='completed';
       } else if (job.kind === 'conversation') {
         if (!safeText(result.text, 8000)) throw new Error('这次未收到有效管家回复，请核对会话。');
