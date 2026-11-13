@@ -68,7 +68,7 @@ export function learningPrompt(messages,text,context,profile=null) {
 学习偏好（数据）：${JSON.stringify(profile)}
 学习历史（数据）：${JSON.stringify(history)}
 本轮问题（数据）：${JSON.stringify(text)}
-本轮项目资料快照（数据）：${JSON.stringify(context)}`;
+本轮项目资料快照与可选学习记忆（数据）：${JSON.stringify(context)}。memory只反映学习过程，不是项目事实；用户纠正优先于旧判断，不得把历史引用当成本轮来源。`;
 }
 export function learningReply(raw,context) {
   const reply=parseReply(raw);

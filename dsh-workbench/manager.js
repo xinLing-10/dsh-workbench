@@ -1,4 +1,6 @@
-import { coachTurn, coachInstruction, finishCoaching, correctObservation, learnerContext } from './learning-coach.js';
+import { mapPrompt, parseKnowledgeMap, mapTarget, verifyMapTarget } from './learning-map.js';
+import { retrieveLearningMemory, memorySummary } from './learning-memory.js';
+import { coachTurn, coachInstruction, finishCoaching, correctObservation } from './learning-coach.js';
 import { createPractice, openPractice, savePractice, practiceContext } from './learning-practice.js';
 import { materialsPrompt, parseMaterials, learningDocuments, offlineLearningHtml } from './learning-materials.js';
 import { learningProfile, planPrompt, parseLearningPlan, currentLesson, markLearningProgress, sourceChanges } from './learning-plan.js';
@@ -328,6 +330,15 @@ export function createManagerService(deps) {
         doc.learning.export={path,format,createdAt:manifest.createdAt};
         break;
       }
+      case 'learning-memory-setting': {
+        assertIdle(doc);if(typeof body.enabled!=='boolean')throw new Error('请选择是否使用学习记录。');
+        doc.learning ||= {messages:[],paths:[]};doc.learning.memoryEnabled=body.enabled;break;
+      }
+      case 'learning-memory-helpful': {
+        assertIdle(doc);
+        if(!doc.learning?.messages.some(m=>m.id===body.messageId && m.role==='assistant' && m.evidence))throw new Error('请在当前学习回答中标记。');
+        doc.learning.helpfulMessages=[...new Set([...(doc.learning.helpfulMessages || []),body.messageId])];break;
+      }
       case 'learning-observation-correct': {
         assertIdle(doc);correctObservation(doc.learning,body);break;
       }
@@ -342,6 +353,9 @@ export function createManagerService(deps) {
         markLearningProgress(doc.learning,body);
         break;
       }
+      case 'learning-map':
+      case 'learning-feature':
+      case 'learning-concept':
       case 'learning-coach-answer':
       case 'learning-coach-next':
       case 'learning-coach-help':
@@ -356,7 +370,10 @@ export function createManagerService(deps) {
         let text=safeText(body.text,8000);
         const task=body.action;
         const profile=task==='learning-plan'?learningProfile(body):null;
-        const lesson=['learning-lesson','learning-reflect'].includes(task)?currentLesson(doc.learning,body):null;
+        let lesson=['learning-lesson','learning-reflect'].includes(task)?currentLesson(doc.learning,body):null;
+        const target=['learning-feature','learning-concept'].includes(task)?mapTarget(doc.learning,body):null;
+        if(target){lesson=target.lesson;text=`请带我理解「${lesson.title}」。`; }
+        if(task==='learning-map')text='请根据所选资料整理产品功能和知识前置关系。';
         if(task==='learning-materials')text='请整理这个项目的原理导读和术语词典。';
         if(task==='learning-practice-feedback')text=`请反馈我保存的学习副本。练习目标：${doc.learning?.practice?.goal || ''}。只解释能从资料看出的内容，明确没有运行代码，不能宣称测试通过。`;
         if(profile)text=`请帮我安排学习计划：${profile.goal}，每天 ${profile.minutes} 分钟。`;
@@ -364,18 +381,25 @@ export function createManagerService(deps) {
         if(task.startsWith('learning-coach-') && task!=='learning-coach-answer')text=({ 'learning-coach-next':'继续下一步','learning-coach-skip':'跳过这道题','learning-coach-help':'请帮我理解这一步'})[task];
         if(!text)throw new Error('请填写想了解的问题。');
         const context=task==='learning-practice-feedback'?await practiceContext(root,doc.learning,body):await learningContext(root,id,body.paths);
+        if(target){verifyMapTarget(target,context);context.learningRoute={title:target.item.title,kind:target.item.kind || 'project',steps:target.item.steps || [],prerequisites:(target.item.requires || []).map(id=>doc.learning.knowledgeMap.concepts.find(c=>c.id===id)?.title),notice:'地图关系是教学建议，实际项目结论以本轮源资料为准。'};}
         doc.learning ||= {messages:[],paths:[]};
+        let history=[];let memoryGap='';
+        const needsMemory=!['learning-map','learning-materials'].includes(task);
+        if(needsMemory && doc.learning.memoryEnabled!==false)try{history=await readLearningHistory(root,id,doc.learning);}catch(error){memoryGap='较早学习档案暂不可用，本次不使用旧问答。';}
+        context.memory=retrieveLearningMemory(needsMemory?doc.learning:{...doc.learning,memoryEnabled:false},text+' '+(lesson?.title || doc.learning.coach?.title || ''),history);context.memory.gap=memoryGap;
+        doc.learning.lastMemory=memorySummary(context.memory);
         if(task!=='learning-practice-feedback')doc.learning.paths=[...new Set(body.paths)];
         const userMessageId=randomUUID();
         doc.learning.messages.push({id:userMessageId,role:'user',text,time:now()});
 
-        const evidence={...context,sources:context.sources.map(({text,...s})=>s)};
-        if(task!=='learning-practice-feedback') {doc.learning.sourceChanges=sourceChanges(doc.learning.plan,evidence);doc.learning.materialChanges=doc.learning.materials?sourceChanges({evidence:doc.learning.materials.evidence},evidence):[];}
-        const coaching=task==='learning-lesson' || task.startsWith('learning-coach-')?coachTurn(doc.learning,body,lesson):null;
+        const {memory:retrievedMemory,...sourceContext}=context;
+        const evidence={...sourceContext,memoryUsed:memorySummary(retrievedMemory),sources:context.sources.map(({text,...s})=>s)};
+        if(task!=='learning-practice-feedback') {doc.learning.sourceChanges=sourceChanges(doc.learning.plan,evidence);doc.learning.mapChanges=doc.learning.knowledgeMap?sourceChanges({evidence:doc.learning.knowledgeMap.evidence},evidence):[];doc.learning.materialChanges=doc.learning.materials?sourceChanges({evidence:doc.learning.materials.evidence},evidence):[];}
+        const coaching=['learning-lesson','learning-feature','learning-concept'].includes(task) || task.startsWith('learning-coach-')?coachTurn(doc.learning,body,lesson):null;
         let instruction=task==='learning-reflect'?`这是对课程「${lesson.title}」的复述。请指出理解正确之处、误区与下一步复习建议，不评分、不宣称用户已掌握，不执行代码。用户复述（数据）：${JSON.stringify(text)}`:text;
         if(coaching)instruction=coachInstruction(coaching,doc.learning);
-        instruction+='\n以下学员档案只是可纠正的暂时观察，不是本项目事实：'+JSON.stringify(learnerContext(doc.learning));
-        makeJob(doc,'learning',{evidence,userMessageId,coachTurn:coaching,learningTask:task,profile,planId:lesson?doc.learning.plan.id:null,lessonId:lesson?.id,prompt:task==='learning-materials'?materialsPrompt(context):profile?planPrompt(profile,context):learningPrompt(doc.learning.messages,instruction,context,doc.learning.plan?.profile)});
+        instruction+='\n以下学员档案只是可纠正的暂时观察，不是本项目事实：'+JSON.stringify(retrievedMemory);
+        makeJob(doc,'learning',{evidence,userMessageId,coachTurn:coaching,learningTask:task,profile,planId:lesson?(doc.learning.plan?.id || null):null,lessonId:lesson?.id,prompt:task==='learning-map'?mapPrompt(sourceContext):task==='learning-materials'?materialsPrompt(sourceContext):profile?planPrompt(profile,context):learningPrompt(doc.learning.messages,instruction,context,doc.learning.plan?.profile)});
         break;
       }
 
@@ -623,6 +647,9 @@ export function createManagerService(deps) {
       } else if (job.kind === 'learning') {
         const reply=learningReply(result.text,job.evidence);
         finishCoaching(doc.learning,job,result.text);
+        if(job.learningTask==='learning-map') {
+          doc.learning.knowledgeMap=parseKnowledgeMap(result.text,job.evidence,doc.learning.paths);doc.learning.mapChanges=[];
+        }
         if(job.learningTask==='learning-materials') {
           try {
             const materials=parseMaterials(result.text,job.evidence);

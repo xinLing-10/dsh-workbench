@@ -14,9 +14,9 @@ export function activeCoach(learning,body) {
 }
 export function coachTurn(learning,body,lesson) {
   let coach;
-  if(body.action==='learning-lesson') {
+  if(['learning-lesson','learning-feature','learning-concept','learning-review'].includes(body.action)) {
     if(learning.coach)learning.previousCoaches=[...(learning.previousCoaches || []),learning.coach].slice(-20);
-    coach={id:randomUUID(),planId:learning.plan.id,lessonId:lesson.id,conceptId:conceptKey(lesson.title),title:lesson.title,objective:lesson.objective,step:'diagnostic',hintLevel:0,createdAt:now(),paused:false};
+    coach={id:randomUUID(),planId:learning.plan?.id || null,lessonId:lesson.id,conceptId:conceptKey(lesson.title),relatedConceptIds:lesson.relatedConceptIds || [],title:lesson.title,objective:lesson.objective,step:'diagnostic',hintLevel:0,createdAt:now(),paused:false};
     learning.coach=coach;
     return {coachId:coach.id,step:coach.step,nextStep:coach.step,assess:false,instruction:`开始学习「${lesson.title}」，目标：${lesson.objective}。先用一个无压力、无需专业术语的问题了解用户已有认识，暂时不要给完整讲解；告诉用户可以跳过。`};
   }

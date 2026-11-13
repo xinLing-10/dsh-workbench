@@ -6018,6 +6018,9 @@ ${text.trim().slice(0, 20_000)}
       const [paths,setPaths]=React.useState(()=>{try{const saved=JSON.parse(localStorage.getItem(storageKey+':paths') || 'null');return Array.isArray(saved)?saved.filter(p=>typeof p==='string').slice(0,12):(learning.paths || []);}catch{return learning.paths || [];}});
       React.useEffect(()=>{try{localStorage.setItem(storageKey+':draft',draft);localStorage.setItem(storageKey+':paths',JSON.stringify(paths));}catch{}},[draft,paths,storageKey]);
       const [sourcesOpen,setSourcesOpen]=React.useState(false);
+      const [mapSelection,setMapSelection]=React.useState(null);
+      const knowledgeMap=learning.knowledgeMap;
+      React.useEffect(()=>setMapSelection(null),[knowledgeMap?.id]);
       const [practiceConfirmed,setPracticeConfirmed]=React.useState(false);
       const [practiceCode,setPracticeCode]=React.useState('');
       const editor=learning.editor;
@@ -6064,6 +6067,19 @@ ${text.trim().slice(0, 20_000)}
             ...catalog.map(path=>h('label',{key:path},h('input',{type:'checkbox',checked:paths.includes(path),onChange:()=>{if(locked){showToast(reason);return;}if(paths.includes(path))setPaths(paths.filter(p=>p!==path));else if(paths.length>=12)showToast('每次最多选择 12 份资料，请先取消一份。');else setPaths([...paths,path]);}}),h('span',null,path)))
           ]):null
         ]),
+        h('details',{key:'project-map'},h('summary',null,'从产品功能开始学'),
+          h('p',null,'从当前所选资料整理功能、概念和前置知识。地图关系由模型建议，引用范围已检查，不能当作实际运行验证。'),
+          h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>mutate({action:'learning-map',paths})},knowledgeMap?'更新项目知识地图':'整理项目知识地图'),
+          learning.mapChanges?.length?h('p',{role:'status'},'地图来源已变化或本轮未提供，请更新后再使用推荐入口。'):null,
+          knowledgeMap?h('div',null,!knowledgeMap.features.length?h('p',null,'当前资料不足以确认实际产品功能，可以先学习通用概念。'):null,h('div',{className:'dshpm-starters'},knowledgeMap.features.map(f=>h(Button,{key:f.id,onClick:()=>setMapSelection({item:f,action:'learning-feature'})},f.title))),
+            h('details',null,h('summary',null,'看看概念与前置知识'),...knowledgeMap.concepts.map(c=>h('div',{key:c.id,className:'dshpm-notice'},h('strong',null,c.title+' · '+({project:'项目资料',general:'通用基础',inferred:'推测，待核对'})[c.kind]),h('p',null,c.description),h('p',null,'先了解：'+(c.requires.map(id=>knowledgeMap.concepts.find(n=>n.id===id)?.title).join('、') || '无指定前置')),h(Button,{onClick:()=>setMapSelection({item:c,action:'learning-concept'})},'从这个概念开始'))))):null,
+          mapSelection && knowledgeMap?(()=>{
+            const item=mapSelection.item;
+            const related=(item.conceptIds || item.requires || []).map(id=>knowledgeMap.concepts.find(c=>c.id===id)).filter(Boolean);
+            const suggested=[...new Set([...item.refs,...related.flatMap(c=>c.refs)].map(ref=>ref.path))].filter(path=>knowledgeMap.paths.includes(path)).slice(0,12);
+            return h('div',{className:'dshpm-notice'},h('strong',null,item.title),h('p',null,item.description),item.steps?h('ol',null,item.steps.map((step,i)=>h('li',{key:i},step))):null,h('p',null,'建议使用下列资料。点击开始后，只有这些文件的受限摘录会发送到当前模型服务。'),h('ul',null,suggested.map(path=>h('li',{key:path},path))),!suggested.length?h('p',null,'没有关联项目资料，将先讲通用基础。'):null,h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:async()=>{if(await mutate({action:mapSelection.action,mapId:knowledgeMap.id,nodeId:item.id,confirmedSources:true,paths:suggested})){setPaths(suggested);setAnswering(true);setReflecting(false);setMapSelection(null);}}},'确认资料，开始学习'));
+          })():null),
+        h('details',{key:'memory'},h('summary',null,'学习记忆与偏好'),h('label',null,h('input',{type:'checkbox',checked:learning.memoryEnabled!==false,onChange:e=>{if(locked){showToast(reason);return;}mutate({action:'learning-memory-setting',enabled:e.target.checked});}}),'使用同项目、同轮次较早的学习记录帮助讲解'),h('p',null,'关闭后不检索旧问答和学员观察；当前对话仍需有限的最近消息。历史回答不作为当前项目事实。'),learning.lastMemory?h('div',null,h('p',null,learning.lastMemory.disabled?'本次未使用较早学习记录。':`最近检索：${learning.lastMemory.observations.length} 条观察、${learning.lastMemory.exchanges.length} 段旧问答。`),...learning.lastMemory.observations.map(o=>h('p',{key:o.id},o.title+(o.corrected?' · 已优先采用你的纠正':''))),...learning.lastMemory.exchanges.map(e=>h('p',{key:e.userId},e.question+(e.helpful?' · 你标记过有帮助':''))),learning.lastMemory.gap?h('p',null,learning.lastMemory.gap):null):null),
         h('div',{key:'plan-entry',className:'dshpm-starters'},h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>{setReflecting(false);setPlanStep(1);}},plan?'调整学习计划':'帮我安排学习计划')),
         planStep?h('div',{key:'planning',className:'dshpm-notice','aria-label':'安排学习计划'},[
           h('p',{key:'question'},planStep===1?'你希望学到什么程度？可以在下面直接告诉我。':planStep===2?'你目前接触过哪些计算机知识？':'你每天想花多少时间学习？'),
@@ -6109,6 +6125,7 @@ ${text.trim().slice(0, 20_000)}
         learning.archives?.length?h('p',{key:'archives',className:'dshwb-hint'},`较早的 ${learning.archives.reduce((n,a)=>n+a.count,0)} 条学习记录已归档，下载学习资料可查看；页面展示最近的对话。`):null,
         h('div',{key:'log',ref:logRef,className:'dshpm-messages',role:'log','aria-label':'项目陪学对话'},learning.messages.length?learning.messages.map(m=>h('div',{key:m.id},[
           h(ManagerMessage,{key:'message',message:m,locked:true,lockedReason:'学习问题请直接在下方输入。'}),
+          m.role==='assistant' && m.evidence?h(Button,{key:'helpful',disabled:locked || learning.helpfulMessages?.includes(m.id),disabledReason:locked?reason:'已记下这个解释对你有帮助。',onClick:()=>mutate({action:'learning-memory-helpful',messageId:m.id})},'这个解释有帮助'):null,
           m.evidence?h('details',{key:'evidence',className:'dshpm-learningEvidence'},h('summary',null,'本轮资料与缺口'),h('p',null,'这是该次讲解收到的资料快照，不代表每条结论都已验证；项目更新后请重新提问。'),h('ul',null,m.evidence.sources.map(source=>h('li',{key:source.id},`${source.id} · ${source.path} · 1–${source.lines} 行 · ${source.hash.slice(0,12)}${source.truncated?' · 部分摘录':''}`))),...m.evidence.gaps.map((gap,i)=>h('p',{key:i},gap))):null
         ])):h('p',null,'可以问：“我完全不懂电脑，这个产品是怎么运作的？”也可以先让我做一份原理导读。')),
         task?h('div',{key:'progress',role:'status'},h('p',null,task.kind==='learning'?'管家正在准备讲解…':'开发任务正在处理，可先阅读学习记录。'),task.error?h('p',null,task.error):null,task.sessionId?h(Button,{onClick:()=>openSession(task.sessionId)},'查看处理详情'):null,h(Button,{disabled:!data.available || task.status==='cancelling',disabledReason:!data.available?'执行服务尚未连接。':'已请求停止，请等待结束。',onClick:()=>mutate({action:task.status==='uncertain'?'recheck':'cancel'})},task.status==='uncertain'?'重新检查状态':'停止当前任务')):null,

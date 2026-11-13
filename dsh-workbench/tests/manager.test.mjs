@@ -431,3 +431,26 @@ test('invented student quotes fail without changing learner state',async()=>{
  await f.finish(JSON.stringify({reply:'解释',assessment:{understood:[{claim:'理解接口',quote:'我已经明白'}],misconceptions:[],certainty:'supported',next:'继续'}}));
  const v=await f.view();assert.equal(v.jobs.at(-1).status,'failed');assert.equal(v.learning.coach.step,'diagnostic');assert.equal(v.learning.observations,undefined);
 });
+
+test('project knowledge entry confirms scope and rejects stale project material',async()=>{
+ const f=await fixture();await writeFile(join(f.root,'README.md'),'# 预约\n页面提交请求');
+ await f.call({action:'learning-map',paths:['README.md']});await f.service().tick();
+ await f.finish(JSON.stringify({version:2,blocks:[{type:'summary',text:'预约功能的资料地图'}],knowledgeMap:{concepts:[{key:'page',title:'页面',description:'接收用户操作',kind:'project',requires:[],refs:[{sourceId:'S1',start:1,end:2}]}],features:[{title:'预约',description:'页面提交请求',concepts:['page'],steps:['选择时间','提交请求'],refs:[{sourceId:'S1',start:1,end:2}]}]}}));
+ const map=(await f.view()).learning.knowledgeMap;
+ const body={action:'learning-feature',mapId:map.id,nodeId:map.features[0].id,paths:['README.md']};
+ await assert.rejects(f.call(body),/确认/);
+ await f.call({...body,confirmedSources:true});await f.service().tick();await f.finish('你觉得预约时页面负责什么？');
+ assert.equal((await f.view()).learning.coach.title,'预约');assert.equal((await f.view()).contract,null);
+ await writeFile(join(f.root,'README.md'),'changed');
+ await assert.rejects(f.call({...body,confirmedSources:true}),/变化/);
+ assert.equal((await f.view()).messages.length,0);
+});
+
+test('learning memory can be turned off without losing records or reading unavailable archives',async()=>{
+ const f=await fixture();await f.call({action:'learning-sources'});
+ const path=await managedPath(f.root,`.dsh/workbench/changes/${f.id}/manager.json`);const doc=JSON.parse(await readFile(path,'utf8'));
+ doc.learning.archives=[{path:'bad',count:1,hash:'bad'}];await writeFile(path,JSON.stringify(doc));
+ await f.call({action:'learning-memory-setting',enabled:false});
+ await f.call({action:'learn',text:'接口是什么',paths:[]});await f.service().tick();await f.finish('接口是沟通的约定。');
+ const v=await f.view();assert.equal(v.learning.lastMemory.disabled,true);assert.equal(v.learning.archives.length,1);assert.equal(v.messages.length,0);
+});
