@@ -6140,6 +6140,33 @@ ${text.trim().slice(0, 20_000)}
       ]);
     }
 
+    function ManagerHeaderMenu({ managerMode, changeManagerMode, learningOpen, busy, selectProject, newProject, showHistory, onDetails }) {
+      const menuRef = React.useRef(null);
+      React.useEffect(() => {
+        const closeOutside = event => { const menu=menuRef.current; if(menu?.open && !menu.contains(event.target))menu.open=false; };
+        const closeEscape = event => { const menu=menuRef.current; if(event.key==='Escape' && menu?.open){event.preventDefault();menu.open=false;menu.querySelector('summary')?.focus();} };
+        document.addEventListener('pointerdown',closeOutside);
+        document.addEventListener('keydown',closeEscape);
+        return () => { document.removeEventListener('pointerdown',closeOutside);document.removeEventListener('keydown',closeEscape); };
+      },[]);
+      const group = (title, children) => h('section',{key:title,className:'dshpm-headerMenuGroup','aria-label':title},h('h2',null,title),children);
+      return h('details',{ref:menuRef,className:'dshpm-more dshpm-headerMenu'},
+        h('summary',null,'更多',h('span',{'aria-hidden':true},'⌄')),
+        h('div',{className:'dshpm-headerMenuPanel',onClick:event=>{
+          const button=event.target.closest('button');
+          if(button && button.getAttribute('aria-disabled')!=='true'){menuRef.current.open=false;menuRef.current.querySelector('summary')?.focus();}
+        }},[
+          !learningOpen?group('显示方式',h('div',{className:'dshpm-modeOptions',role:'group','aria-label':'管家显示模式'},[['simple','简洁模式'],['full','完整管家']].map(([value,label])=>h('button',{key:value,type:'button','aria-pressed':managerMode===value,onClick:()=>changeManagerMode(value)},h('span',null,label),h('span',{'aria-hidden':true},managerMode===value?'✓':''))))):null,
+          group('项目管理',[
+            h(Button,{key:'choose',disabled:busy,disabledReason:'正在处理当前操作，请等待完成后再试。',onClick:selectProject},'选择项目文件夹'),
+            h(Button,{key:'new',disabled:busy,disabledReason:'正在处理当前操作，请等待完成后再试。',onClick:newProject},'新建项目'),
+            showHistory?h(Button,{key:'history',onClick:showHistory},'项目记录'):null]),
+          group('帮助与工具',[
+            h(Button,{key:'help',onClick:()=>window.open('/workbench/guide','_blank','noopener')},'使用手册'),
+            h(Button,{key:'details',onClick:onDetails},'详细工作区')])
+        ]));
+    }
+
     function PersonalManagerPage(props) {
       const { state, meta, store } = useWorkbench();
       const copy = copyFor(useLocaleId(props.localeRuntime));
@@ -6378,16 +6405,10 @@ ${text.trim().slice(0, 20_000)}
         h('header', { key: 'header', className: 'dshpm-header' }, [
           h('div', { key: 'title' }, h('p', { className: 'dshpm-eyebrow' }, '你的项目管家'), h('h1', null, state.project.name || (simple?'项目管家':'一起把想法做出来')),
             h('p', { className: 'dshwb-hint' }, learningOpen ? (task?.kind==='learning'?'项目陪学 · 正在准备讲解':'项目陪学 · 提问、复习或接着上次学') : data?.complete ? '本次约定的成果已确认，可以下载文档包。' : task ? MANAGER_JOB_LABELS[task.status] : data?.contract ? `本轮：${MANAGER_STAGE_TITLES[stage] || '了解你的想法'}${simple?' · '+data.presentation.title:''}` : '和一个管家沟通，完整文档随时保留。')),
-          h('div', { key: 'actions', className: 'dshpm-actions' },[
-            !learningOpen?h('div',{key:'mode',className:'dshwb-tabGroup','aria-label':'管家显示模式',role:'group'},[['simple','简洁模式'],['full','完整管家']].map(([value,label])=>h('button',{key:value,type:'button','aria-pressed':managerMode===value,onClick:()=>changeManagerMode(value)},label))):null,
+          h('div', { key: 'actions', className: 'dshpm-actions dshpm-headerActions', 'aria-label':'项目快捷操作' },[
             !learningOpen && simple && data?.contract?h(Button,{key:'results',onClick:()=>{setTab('documents');setSimpleResultsOpen(true);}},`我的成果 · ${data.outputs.length}`):null,
-            h(Button,{key:'learning',disabled:!data,disabledReason:'正在加载项目，请稍等。',onClick:()=>setLearningOpen(v=>!v)},learningOpen?'返回项目工作':'带我学懂这个项目'),
-            h(Button,{key:'help',onClick:()=>window.open('/workbench/guide','_blank','noopener')},'使用手册'),
-            h('details',{key:'more',className:'dshpm-more'},h('summary',null,'更多'),
-              h(Button, { disabled: busy, disabledReason: '正在处理当前操作，请等待完成后再试。', onClick: selectProject }, '选择项目文件夹'),
-              h(Button, { disabled: busy, disabledReason: '正在处理当前操作，请等待完成后再试。', onClick: newProject }, '新建项目'),
-              simple && data?.contract?h(Button,{onClick:()=>{setTab('history');setSimpleResultsOpen(true);}},'项目记录'):null,
-              h(Button, { onClick: props.onDetails }, '详细工作区'))]),
+            h(Button,{key:'learning',disabled:!data,disabledReason:'正在加载项目，请稍等。',onClick:()=>setLearningOpen(v=>!v)},learningOpen?'返回项目工作':'项目陪学'),
+            h(ManagerHeaderMenu,{key:'more',managerMode,changeManagerMode,learningOpen,busy,selectProject,newProject,showHistory:simple && data?.contract?()=>{setTab('history');setSimpleResultsOpen(true);}:null,onDetails:props.onDetails})]),
         ]),
         (error || meta.phase === 'offline') ? h('div', { key: 'error', role: 'alert', className: 'dshpm-notice' },
           h('p', null, error || meta.error || '暂时无法连接工作台，输入内容会保留。'), h(Button, { onClick: () => { setRetry(n => n + 1); store.hydrate(true); } }, '重新连接')) : null,
@@ -8325,9 +8346,22 @@ textarea.dshwb-input { resize: vertical; }
 .dshpm-actionCard .dshpm-actions { margin-top: 12px; }
 .dshpm-planText { white-space: pre-wrap; margin: 12px 0; }
 .dshpm-simple .dshpm-messages { max-height: 360px; }
-.dshpm-more { position: relative; }
-.dshpm-more summary { cursor: pointer; padding: 6px; }
-.dshpm-more[open] { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Header utilities stay grouped without changing the conversation layout. */
+.dshpm-header > div:first-child { min-width:0; flex:1; }
+.dshpm-header h1, .dshpm-header .dshwb-hint { overflow-wrap:anywhere; }
+.dshpm-headerActions { flex:none; gap:8px; align-items:center; }
+.dshpm-headerActions > .dshwb-btn, .dshpm-headerMenu > summary { min-height:36px; border-radius:10px; }
+.dshpm-headerMenu { position:relative; }
+.dshpm-headerMenu > summary { display:flex; align-items:center; gap:12px; cursor:pointer; list-style:none; padding:6px 12px; border:1px solid var(--dsw-alias-border-l1); background:var(--dsw-alias-bg-layer-1); font-size:13px; }
+.dshpm-headerMenu > summary::-webkit-details-marker { display:none; }
+.dshpm-headerMenu[open] > summary { background:var(--dsw-alias-bg-layer-2); }
+.dshpm-headerMenuPanel { position:absolute; z-index:40; top:calc(100% + 8px); right:0; width:272px; max-width:calc(100vw - 28px); max-height:min(70dvh,520px); overflow:auto; padding:8px; border:1px solid var(--dsw-alias-border-l1); border-radius:14px; background:var(--dsw-alias-bg-layer-1); box-shadow:0 12px 36px #17212f24; }
+.dshpm-headerMenuGroup + .dshpm-headerMenuGroup { border-top:1px solid var(--dsw-alias-border-l1); margin-top:6px; padding-top:6px; }
+.dshpm-headerMenuGroup h2 { font-size:11px; font-weight:500; color:var(--dsw-alias-label-secondary); margin:4px 10px 6px; }
+.dshpm-headerMenuGroup .dshwb-btn, .dshpm-modeOptions button { display:flex; align-items:center; justify-content:space-between; width:100%; margin:0; padding:8px 10px; min-height:38px; text-align:left; border:0; border-radius:8px; background:transparent; color:inherit; cursor:pointer; font:inherit; font-size:13px; }
+.dshpm-headerMenuGroup button:hover { background:var(--dsw-alias-bg-layer-2); }
+.dshpm-modeOptions button[aria-pressed="true"] { color:var(--dsw-alias-state-business-primary); background:var(--dsw-alias-state-business-tertiary); }
+@media(max-width:600px) { .dshpm-headerActions { width:100%; justify-content:flex-end; } .dshpm-header { gap:10px; } }
 .dshpm-message { font-size: 15px; line-height: 1.75; overflow-wrap: anywhere; }
 .dshpm-message .dshpm-markdown p { margin: .65em 0; white-space: normal; }
 .dshpm-markdown h1,.dshpm-markdown h2,.dshpm-markdown h3 { font-size: 1.08em; margin: 1em 0 .4em; }
