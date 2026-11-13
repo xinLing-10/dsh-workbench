@@ -16,12 +16,12 @@ export function coachTurn(learning,body,lesson) {
   let coach;
   if(['learning-lesson','learning-feature','learning-concept','learning-review'].includes(body.action)) {
     if(learning.coach)learning.previousCoaches=[...(learning.previousCoaches || []),learning.coach].slice(-20);
-    coach={id:randomUUID(),planId:learning.plan?.id || null,lessonId:lesson.id,conceptId:conceptKey(lesson.title),relatedConceptIds:lesson.relatedConceptIds || [],title:lesson.title,objective:lesson.objective,step:'diagnostic',hintLevel:0,createdAt:now(),paused:false};
+    coach={id:randomUUID(),planId:learning.plan?.id || null,lessonId:lesson.id,conceptId:conceptKey(lesson.title),relatedConceptIds:lesson.relatedConceptIds || [],title:lesson.title,objective:lesson.objective,step:'diagnostic',hintLevel:0,reviewId:lesson.reviewId || null,createdAt:now(),paused:false};
     learning.coach=coach;
-    return {coachId:coach.id,step:coach.step,nextStep:coach.step,assess:false,instruction:`开始学习「${lesson.title}」，目标：${lesson.objective}。先用一个无压力、无需专业术语的问题了解用户已有认识，暂时不要给完整讲解；告诉用户可以跳过。`};
+    return {coachId:coach.id,step:coach.step,nextStep:coach.step,assess:false,instruction:`${lesson.reviewId?'这是一次回顾，先用新场景检验理解，不先给答案。':''}开始学习「${lesson.title}」，目标：${lesson.objective}。先用一个无压力、无需专业术语的问题了解用户已有认识，暂时不要给完整讲解；告诉用户可以跳过。`};
   }
   coach=activeCoach(learning,body);
-  const turn={coachId:coach.id,step:coach.step,nextStep:coach.step,assess:false};
+  const turn={isReview:!!coach.reviewId,coachId:coach.id,step:coach.step,nextStep:coach.step,assess:false};
   if(body.action==='learning-coach-answer') {
     if(!['diagnostic','practice','transfer'].includes(coach.step))throw new Error('当前步骤无需作答，可以继续或直接提问。');
     if(!text(body.text,8000))throw new Error('请先写下你的理解，也可以选择跳过。');
@@ -46,7 +46,7 @@ export function coachTurn(learning,body,lesson) {
 }
 export function coachInstruction(turn,learning) {
   const coach=learning.coach;
-  return `${turn.instruction}\n当前主题：${JSON.stringify({title:coach.title,objective:coach.objective,step:turn.step,nextStep:turn.nextStep,hintLevel:turn.hintLevel ?? coach.hintLevel})}。教学步骤由服务端控制，不能自行跳步。\n${turn.assess?`除正文 blocks 外，必须增加独立 assessment 字段：{"understood":[{"claim":"本次能观察到的理解","quote":"本次回答中逐字出现的短句"}],"misconceptions":[{"claim":"需要澄清的具体理解","quote":"本次回答中逐字出现的短句"}],"certainty":"tentative|supported","next":"下一步学习建议"}。两组各至多3项，claim最多240字，quote最多240字；没有证据就留空，不能由沉默或请求帮助推断误区。只能评价本次回答，不诊断人格或能力，不打掌握度分数。certainty不确定时选tentative。学习观察是可由用户纠正的暂时判断。`:'本轮不生成 assessment，不推断用户掌握情况。'}`;
+  return `${turn.instruction}\n当前主题：${JSON.stringify({title:coach.title,objective:coach.objective,step:turn.step,nextStep:turn.nextStep,hintLevel:turn.hintLevel ?? coach.hintLevel,questionContext:coach.questionContext || ''})}。教学步骤由服务端控制，不能自行跳步。\n${turn.assess?`除正文 blocks 外，必须增加独立 assessment 字段：{"understood":[{"claim":"本次能观察到的理解","quote":"本次回答中逐字出现的短句"}],"misconceptions":[{"claim":"需要澄清的具体理解","quote":"本次回答中逐字出现的短句"}],"certainty":"tentative|supported","next":"下一步学习建议"}。两组各至多3项，claim最多240字，quote最多240字；没有证据就留空，不能由沉默或请求帮助推断误区。只能评价本次回答，不诊断人格或能力，不打掌握度分数。certainty不确定时选tentative。学习观察是可由用户纠正的暂时判断。`:'本轮不生成 assessment，不推断用户掌握情况。'}`;
 }
 export function parseAssessment(raw,answer) {
   let data;try{data=JSON.parse(raw.trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,''));}catch{throw invalid('没有收到结构化学习观察，请重新回答或跳过。');}
@@ -61,21 +61,28 @@ export function parseAssessment(raw,answer) {
   };
   return {understood:items(a.understood),misconceptions:items(a.misconceptions),certainty:a.certainty,next:text(a.next,400)};
 }
-export function finishCoaching(learning,job,raw) {
+export function finishCoaching(learning,job,raw,replyText='') {
   const turn=job.coachTurn;if(!turn)return;
   const coach=activeCoach(learning,{coachId:turn.coachId,step:turn.step});
   const assessment=turn.assess?parseAssessment(raw,turn.answer):null;
+  let observation=null;
   if(assessment) {
-    const observation={id:randomUUID(),conceptId:coach.conceptId,title:coach.title,messageId:job.userMessageId,coachId:coach.id,step:turn.step,...assessment,evidence:job.evidence,time:now(),corrected:false};
+    observation={id:randomUUID(),conceptId:coach.conceptId,title:coach.title,messageId:job.userMessageId,coachId:coach.id,step:turn.step,...assessment,evidence:job.evidence,time:now(),corrected:false};
     learning.observations=[...(learning.observations || []),observation];
+    if(coach.reviewId && turn.step==='diagnostic' && assessment.certainty==='supported' && assessment.understood.length && !assessment.misconceptions.length)turn.nextStep='review';
     if(turn.step==='practice' && (assessment.misconceptions.length || !assessment.understood.length))turn.nextStep='explain';
     if(turn.step==='transfer' && assessment.misconceptions.length)turn.nextStep='feedback';
     if(['practice','transfer'].includes(turn.step) && learning.plan?.id===coach.planId) {
       const lesson=learning.plan.lessons.find(l=>l.id===coach.lessonId);if(lesson)lesson.reflectedAt=now();
     }
   }
+  if(replyText){
+    if(['diagnostic','practice','transfer'].includes(turn.nextStep) && (turn.nextStep!==turn.step || !coach.questionContext))coach.questionContext=replyText.slice(0,4000);
+    coach.lastTeachingText=replyText.slice(0,4000);
+  }
   coach.step=turn.nextStep;coach.hintLevel=turn.hintLevel ?? coach.hintLevel;coach.updatedAt=now();
   if(turn.preference)learning.preferences={...(learning.preferences || {}),explanation:turn.preference};
+  return observation;
 }
 export function correctObservation(learning,body) {
   const observation=learning?.observations?.find(o=>o.id===body.observationId);

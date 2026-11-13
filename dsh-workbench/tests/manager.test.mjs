@@ -454,3 +454,16 @@ test('learning memory can be turned off without losing records or reading unavai
  await f.call({action:'learn',text:'接口是什么',paths:[]});await f.service().tick();await f.finish('接口是沟通的约定。');
  const v=await f.view();assert.equal(v.learning.lastMemory.disabled,true);assert.equal(v.learning.archives.length,1);assert.equal(v.messages.length,0);
 });
+
+test('review controls preserve records and user corrections invalidate obsolete reminders',async()=>{
+ const f=await fixture();await f.call({action:'learning-sources'});
+ const path=await managedPath(f.root,`.dsh/workbench/changes/${f.id}/manager.json`);const d=JSON.parse(await readFile(path,'utf8'));
+ d.learning.observations=[{id:'o',title:'接口',conceptId:'c',understood:[],misconceptions:[{claim:'待澄清',quote:'数据库'}],next:'复习'}];
+ d.learning.reviews=[{id:'review',title:'接口',conceptId:'c',observationId:'o',status:'scheduled',dueAt:'2020-01-01T00:00:00Z',reason:'待回顾'}];await writeFile(path,JSON.stringify(d));
+ assert.equal((await f.view()).learning.reviewSchedule.dueCount,1);
+ await f.call({action:'learning-review-settings',enabled:false});assert.equal((await f.view()).learning.reviewSchedule.dueCount,0);
+ await f.call({action:'learning-observation-correct',observationId:'o',text:'这不是我的意思'});assert.equal((await f.view()).learning.reviews[0].status,'needs-confirmation');
+ await f.call({action:'learning-review-defer',reviewId:'review',days:3});assert.equal((await f.view()).learning.reviews[0].status,'scheduled');
+ await f.call({action:'learning-review',reviewId:'review',paths:[]});await f.service().tick();await f.finish('换个场景说说接口做什么？');
+ const v=await f.view();assert.equal(v.learning.coach.reviewId,'review');assert.equal(v.messages.length,0);assert.equal(v.proposal,null);
+});

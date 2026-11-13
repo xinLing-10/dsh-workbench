@@ -4,10 +4,10 @@ import {coachTurn,finishCoaching,parseAssessment,correctObservation,learnerConte
 const fixture=()=>({messages:[],plan:{id:'p',lessons:[{id:'l',title:'接口',objective:'理解页面如何请求服务'}]}});
 const result=(quote)=>JSON.stringify({assessment:{understood:[],misconceptions:[{claim:'把接口等同于存储',quote}],certainty:'tentative',next:'用预约单重新解释'}});
 test('teaching starts with diagnosis, allows skipping and preserves phase during hints',()=>{
- const l=fixture();coachTurn(l,{action:'learning-lesson'},l.plan.lessons[0]);
+ const l=fixture();const start=coachTurn(l,{action:'learning-lesson'},l.plan.lessons[0]);finishCoaching(l,{coachTurn:start},'', '你觉得服务负责什么？');
  const body={coachId:l.coach.id,step:'diagnostic'};
  const hint=coachTurn(l,{...body,action:'learning-coach-help',variant:'hint'});assert.equal(l.coach.hintLevel,0);
- finishCoaching(l,{coachTurn:hint},'');assert.equal(l.coach.hintLevel,1);assert.equal(l.coach.step,'diagnostic');
+ finishCoaching(l,{coachTurn:hint},'', '想想接单的店员。');assert.equal(l.coach.questionContext,'你觉得服务负责什么？');assert.equal(l.coach.hintLevel,1);assert.equal(l.coach.step,'diagnostic');
  const skip=coachTurn(l,{...body,action:'learning-coach-skip'});finishCoaching(l,{coachTurn:skip},'');assert.equal(l.coach.step,'explain');assert.equal(l.observations,undefined);
 });
 test('assessment quotes must occur in the current answer',()=>{

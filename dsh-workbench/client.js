@@ -6067,6 +6067,10 @@ ${text.trim().slice(0, 20_000)}
             ...catalog.map(path=>h('label',{key:path},h('input',{type:'checkbox',checked:paths.includes(path),onChange:()=>{if(locked){showToast(reason);return;}if(paths.includes(path))setPaths(paths.filter(p=>p!==path));else if(paths.length>=12)showToast('每次最多选择 12 份资料，请先取消一份。');else setPaths([...paths,path]);}}),h('span',null,path)))
           ]):null
         ]),
+        learning.reviewSchedule?.dueCount?h('div',{key:'review-due',className:'dshpm-notice',role:'status'},h('strong',null,`今天有 ${learning.reviewSchedule.dueCount} 个主题可以回顾`),h('p',null,'这是依据学习记录给出的建议，可以推迟或关闭，不代表你已经遗忘。'),h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:async()=>{if(await mutate({action:'learning-review',reviewId:learning.reviewSchedule.nextDueId,paths})){setAnswering(true);setReflecting(false);}}},'先回顾一个')):null,
+        h('details',{key:'reviews'},h('summary',null,'复习安排'),h('label',null,h('input',{type:'checkbox',checked:learning.reviewSchedule?.enabled!==false,onChange:e=>{if(locked){showToast(reason);return;}mutate({action:'learning-review-settings',enabled:e.target.checked});}}),'显示站内复习建议'),h('p',null,'只在打开工作台时显示，不发送站外消息。安排使用透明规则：待澄清或不确定的回答建议明天再看，有理解依据的回答通常 3 天后回顾；复习后可逐步延长，最长 14 天。'),
+          !learning.reviewSchedule?.items.length?h('p',null,'完成一次步骤作答，或记录自评理解后，这里会出现建议安排。'):null,
+          ...(learning.reviewSchedule?.items || []).map(item=>h('article',{key:item.id,className:'dshpm-notice'},h('strong',null,item.title),h('p',null,item.reason),h('p',null,item.status==='scheduled'?'建议日期：'+new Date(item.dueAt).toLocaleDateString('zh-CN'):item.status==='paused'?'这个主题的复习已暂停。':'相关观察已纠正，等待重新确认。'),h('div',{className:'dshpm-starters'},h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:async()=>{if(await mutate({action:'learning-review',reviewId:item.id,paths})){setAnswering(true);setReflecting(false);}}},'现在回顾'),...[1,3,7].map(days=>h(Button,{key:days,disabled:locked,disabledReason:reason,onClick:()=>mutate({action:'learning-review-defer',reviewId:item.id,days})},days===1?'明天再看':`${days} 天后再看`)),h(Button,{disabled:locked || item.status==='paused',disabledReason:locked?reason:'已经暂停，可选择日期重新安排。',onClick:()=>mutate({action:'learning-review-pause',reviewId:item.id})},'暂不提醒这个主题'))))),
         h('details',{key:'project-map'},h('summary',null,'从产品功能开始学'),
           h('p',null,'从当前所选资料整理功能、概念和前置知识。地图关系由模型建议，引用范围已检查，不能当作实际运行验证。'),
           h(Button,{disabled:locked || !data.available,disabledReason:reason,onClick:()=>mutate({action:'learning-map',paths})},knowledgeMap?'更新项目知识地图':'整理项目知识地图'),
@@ -6086,7 +6090,7 @@ ${text.trim().slice(0, 20_000)}
           planStep===1?h('div',{key:'goals',className:'dshpm-starters'},['先理解产品原理','能看懂代码并自己维护'].map(goal=>h(Button,{key:goal,disabled:locked,disabledReason:reason,onClick:()=>{setPlanGoal(goal);setPlanStep(2);}},goal))):planStep===2?h('div',{key:'levels',className:'dshpm-starters'},[['zero','完全没有'],['beginner','接触过一点'],['experienced','有开发经验']].map(([level,label])=>h(Button,{key:level,disabled:locked,disabledReason:reason,onClick:()=>{setPlanLevel(level);setPlanStep(3);}},label))):h('div',{key:'minutes',className:'dshpm-starters'},[10,20,30,60].map(minutes=>h(Button,{key:minutes,disabled:locked,disabledReason:reason,onClick:()=>setPlanMinutes(minutes),'aria-pressed':planMinutes===minutes},`${minutes} 分钟`)),h(Button,{kind:'primary',disabled:locked || !data.available,disabledReason:reason,onClick:async()=>{if(await mutate({action:'learning-plan',goal:planGoal,level:planLevel,minutes:planMinutes,paths})){setPlanStep(0);setDraft('');}}},'请管家安排')),
           h(Button,{key:'cancel',onClick:()=>setPlanStep(0)},'暂时不安排')
         ]):null,
-        plan?h('details',{key:'plan',className:'dshpm-learningPlan',open:true},h('summary',null,`${plan.title} · ${plan.lessons.filter(l=>l.status==='self-checked').length}/${plan.lessons.length} 课自评理解`),
+        plan?h('details',{key:'plan',className:'dshpm-learningPlan',open:!coach},h('summary',null,`${plan.title} · ${plan.lessons.filter(l=>l.status==='self-checked').length}/${plan.lessons.length} 课自评理解`),
           h('p',null,`每天 ${plan.profile.minutes} 分钟 · ${plan.profile.goal}`),
           learning.sourceChanges?.length?h('p',{role:'status'},'部分计划资料已变化或本轮未提供，请重新选择资料或调整计划：'+learning.sourceChanges.join('、')):null,
           h('details',null,h('summary',null,'看看知识地图'),h('ul',null,plan.map.map((topic,i)=>h('li',{key:i},topic)))),
@@ -6096,6 +6100,7 @@ ${text.trim().slice(0, 20_000)}
             h('p',{className:'dshwb-hint'},'自评理解由你主动记录，模型反馈和阅读次数不等于已经掌握。')):null):null,
         coach?h('section',{key:'coach',className:'dshpm-notice','aria-label':'当前陪学步骤'},[
           h('strong',{key:'title'},coach.title+' · '+({diagnostic:'先聊聊你的理解',explain:'一起理解',practice:'试着解释或预测',feedback:'看看反馈',transfer:'换个场景试试',review:'回顾与下次安排'})[coach.step]),
+          coach.questionContext?h('div',{key:'question','aria-label':'本步问题'},h(MessageMarkdown,{nodes:coach.questionNodes || []})):null,
           h('p',{key:'hint'},coach.paused?'这节课已暂停，进度保留。':'一次学一点。可以回答、跳过，也可以随时先问一个问题。'),
           h('div',{key:'actions',className:'dshpm-starters'},[
             coach.paused?h(Button,{key:'resume',disabled:locked,disabledReason:reason,onClick:()=>mutate({action:'learning-coach-pause',coachId:coach.id,paused:false})},'接着上次学'):h(Button,{key:'pause',disabled:locked,disabledReason:reason,onClick:()=>mutate({action:'learning-coach-pause',coachId:coach.id,paused:true})},'先暂停这节课'),
@@ -6114,7 +6119,7 @@ ${text.trim().slice(0, 20_000)}
           learning.materialChanges?.length?h('p',{role:'status'},'学习资料来源已变化或本轮未提供，请重新整理后再下载。'):null,
           learning.materials?h('div',null,h(MessageMarkdown,{nodes:learning.materials.overviewNodes || []}),h('dl',null,learning.materials.glossary.map((g,i)=>h('div',{key:i},h('dt',null,h('strong',null,g.term)),h('dd',null,g.meaning))))):null,
           h('div',{className:'dshpm-starters'},[['markdown','下载 Markdown'],['html','下载离线 HTML'],['zip','下载学习资料包']].map(([format,label])=>h(Button,{key:format,disabled:locked || !learning.messages.length,disabledReason:locked?reason:'请先完成一次学习问答或整理资料。',onClick:async()=>{const result=await mutate({action:'learning-export',format});if(result?.learning?.export)download(result.learning.export.path,'项目陪学资料.'+(format==='markdown'?'md':format));}},label))),
-          h('p',{className:'dshwb-hint'},'资料包含导读、词典、计划、问答、练习记录和版本清单，不含源码或模型凭据。离线 HTML 可用浏览器打印为 PDF。')),
+          h('p',{className:'dshwb-hint'},'资料包含导读、词典、计划、问答、练习记录、学习观察与复习安排及版本清单，不含源码或模型凭据。离线 HTML 可用浏览器打印为 PDF。')),
         h('details',{key:'practice',className:'dshpm-learningPractice'},h('summary',null,'动手练习（学习副本）'),
           h('p',null,'只复制你选中的文件，在副本里练习解释或修改一条提示文字。它不是完整运行环境；不会执行代码或修改原项目。'),
           h('label',null,h('input',{type:'checkbox',checked:practiceConfirmed,onChange:e=>setPracticeConfirmed(e.target.checked)}),'我确认仅创建学习副本，不执行代码'),

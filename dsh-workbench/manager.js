@@ -1,3 +1,4 @@
+import { scheduleObservation, scheduleSelfReview, deferReview, pauseReview, invalidateReview, reviewTarget, reviewPresentation } from './learning-review.js';
 import { mapPrompt, parseKnowledgeMap, mapTarget, verifyMapTarget } from './learning-map.js';
 import { retrieveLearningMemory, memorySummary } from './learning-memory.js';
 import { coachTurn, coachInstruction, finishCoaching, correctObservation } from './learning-coach.js';
@@ -277,7 +278,7 @@ export function createManagerService(deps) {
     const stage = nextStage(doc, state);
     const stages = MANAGER_MODES[doc.contract?.mode]?.stages || [];
     const complete = stages.length > 0 && !stage && !doc.jobs.some(j => ACTIVE.has(j.status) || j.status === 'uncertain');
-    const result = { ...doc, learning: presentLearning(doc.learning), messages: doc.messages.map(m => presentMessage(m, doc.answers || {})), jobs: doc.jobs.map(({ prompt, ...job }) => ({ ...job, progress: progressOf(job, review) })), nextStage: stage || null, complete, available: !!deps.adapter(), review,
+    const result = { ...doc, learning: {...presentLearning(doc.learning),reviewSchedule:reviewPresentation(doc.learning)}, messages: doc.messages.map(m => presentMessage(m, doc.answers || {})), jobs: doc.jobs.map(({ prompt, ...job }) => ({ ...job, progress: progressOf(job, review) })), nextStage: stage || null, complete, available: !!deps.adapter(), review,
       buildChecks: state.stageData.build.confirmations,
       outputs: stages.flatMap(s => Object.entries(review.stages[s].hashes).filter(([, hash]) => hash).map(([name, hash]) => ({ name, hash, stage: s, title: TITLES[s], confirmed: state.stageData[s].confirmed }))) };
     return {...result,presentation:deriveManagerPresentation(result,state)};
@@ -330,6 +331,12 @@ export function createManagerService(deps) {
         doc.learning.export={path,format,createdAt:manifest.createdAt};
         break;
       }
+      case 'learning-review-settings': {
+        assertIdle(doc);if(typeof body.enabled!=='boolean')throw new Error('请选择是否显示复习提醒。');
+        doc.learning ||= {messages:[],paths:[]};doc.learning.reviewReminders=body.enabled;break;
+      }
+      case 'learning-review-defer': {assertIdle(doc);deferReview(doc.learning,body);break;}
+      case 'learning-review-pause': {assertIdle(doc);pauseReview(doc.learning,body);break;}
       case 'learning-memory-setting': {
         assertIdle(doc);if(typeof body.enabled!=='boolean')throw new Error('请选择是否使用学习记录。');
         doc.learning ||= {messages:[],paths:[]};doc.learning.memoryEnabled=body.enabled;break;
@@ -340,7 +347,7 @@ export function createManagerService(deps) {
         doc.learning.helpfulMessages=[...new Set([...(doc.learning.helpfulMessages || []),body.messageId])];break;
       }
       case 'learning-observation-correct': {
-        assertIdle(doc);correctObservation(doc.learning,body);break;
+        assertIdle(doc);correctObservation(doc.learning,body);invalidateReview(doc.learning,body.observationId);break;
       }
       case 'learning-coach-pause': {
         assertIdle(doc);
@@ -350,9 +357,10 @@ export function createManagerService(deps) {
       }
       case 'learning-progress': {
         assertIdle(doc);
-        markLearningProgress(doc.learning,body);
+        markLearningProgress(doc.learning,body);if(body.status==='self-checked')scheduleSelfReview(doc.learning,currentLesson(doc.learning,body));
         break;
       }
+      case 'learning-review':
       case 'learning-map':
       case 'learning-feature':
       case 'learning-concept':
@@ -372,6 +380,7 @@ export function createManagerService(deps) {
         const profile=task==='learning-plan'?learningProfile(body):null;
         let lesson=['learning-lesson','learning-reflect'].includes(task)?currentLesson(doc.learning,body):null;
         const target=['learning-feature','learning-concept'].includes(task)?mapTarget(doc.learning,body):null;
+        if(task==='learning-review'){lesson=reviewTarget(doc.learning,body);text=`请带我回顾「${lesson.title}」。`;}
         if(target){lesson=target.lesson;text=`请带我理解「${lesson.title}」。`; }
         if(task==='learning-map')text='请根据所选资料整理产品功能和知识前置关系。';
         if(task==='learning-materials')text='请整理这个项目的原理导读和术语词典。';
@@ -395,7 +404,7 @@ export function createManagerService(deps) {
         const {memory:retrievedMemory,...sourceContext}=context;
         const evidence={...sourceContext,memoryUsed:memorySummary(retrievedMemory),sources:context.sources.map(({text,...s})=>s)};
         if(task!=='learning-practice-feedback') {doc.learning.sourceChanges=sourceChanges(doc.learning.plan,evidence);doc.learning.mapChanges=doc.learning.knowledgeMap?sourceChanges({evidence:doc.learning.knowledgeMap.evidence},evidence):[];doc.learning.materialChanges=doc.learning.materials?sourceChanges({evidence:doc.learning.materials.evidence},evidence):[];}
-        const coaching=['learning-lesson','learning-feature','learning-concept'].includes(task) || task.startsWith('learning-coach-')?coachTurn(doc.learning,body,lesson):null;
+        const coaching=['learning-lesson','learning-feature','learning-concept','learning-review'].includes(task) || task.startsWith('learning-coach-')?coachTurn(doc.learning,body,lesson):null;
         let instruction=task==='learning-reflect'?`这是对课程「${lesson.title}」的复述。请指出理解正确之处、误区与下一步复习建议，不评分、不宣称用户已掌握，不执行代码。用户复述（数据）：${JSON.stringify(text)}`:text;
         if(coaching)instruction=coachInstruction(coaching,doc.learning);
         instruction+='\n以下学员档案只是可纠正的暂时观察，不是本项目事实：'+JSON.stringify(retrievedMemory);
@@ -646,7 +655,8 @@ export function createManagerService(deps) {
         sayJob(doc, job, job.error);
       } else if (job.kind === 'learning') {
         const reply=learningReply(result.text,job.evidence);
-        finishCoaching(doc.learning,job,result.text);
+        const observation=finishCoaching(doc.learning,job,result.text,reply.text);
+        if(observation)scheduleObservation(doc.learning,observation,job);
         if(job.learningTask==='learning-map') {
           doc.learning.knowledgeMap=parseKnowledgeMap(result.text,job.evidence,doc.learning.paths);doc.learning.mapChanges=[];
         }

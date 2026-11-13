@@ -34,6 +34,6 @@ test('materials reject fabricated source IDs and offline HTML escapes raw HTML w
 });
 test('learning documents explicitly distinguish self assessment from execution and export no editor source',()=>{
  const entries=learningDocuments({messages:[{role:'user',time:'now',text:'什么是页面？'}],editor:{content:'PRIVATE_SOURCE_NOT_FOR_EXPORT'}});
- assert.equal(entries.length,5);assert.ok(!JSON.stringify(entries).includes('PRIVATE_SOURCE_NOT_FOR_EXPORT'));
+ assert.equal(entries.length,6);assert.ok(!JSON.stringify(entries).includes('PRIVATE_SOURCE_NOT_FOR_EXPORT'));
  assert.ok(JSON.stringify(entries).includes('没有自动执行代码'));
 });

@@ -80,7 +80,7 @@ export function learningReply(raw,context) {
   if(!blocks.length)throw new Error('未收到有效的学习讲解，请重新提问。');
   return {text:blocks.map(b=>b.text || b.items.join('\n')).join('\n\n'),blocks};
 }
-export function presentLearning(doc) { return {...(doc || {messages:[],paths:[]}),...(doc?.materials?{materials:{...doc.materials,overviewNodes:markdownNodes(doc.materials.overview)}}:{}),messages:(doc?.messages || []).map(m=>presentMessage(m))}; }
+export function presentLearning(doc) { return {...(doc || {messages:[],paths:[]}),...(doc?.coach?{coach:{...doc.coach,questionNodes:markdownNodes(doc.coach.questionContext || '')}}:{}),...(doc?.materials?{materials:{...doc.materials,overviewNodes:markdownNodes(doc.materials.overview)}}:{}),messages:(doc?.messages || []).map(m=>presentMessage(m))}; }
 
 /** Keep a bounded live thread without losing earlier learning records. */
 export async function archiveLearning(root,id,learning) {
