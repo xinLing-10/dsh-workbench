@@ -14,6 +14,10 @@
 
 维护者可使用 [教学评测工具](dsh-workbench/docs/teaching-evaluation.md) 检查已有模型回复；12 个案例不自动调用模型，真实教学效果仍需试学。
 
+## 独立管家产品规划（待实施）
+
+面向“自有前端、普通账号登录、运营者统一提供模型”的详细设计见 **[独立管家产品详细设计方案](dsh-workbench/docs/standalone-manager-design.md)**。方案包括内部 DSH 桥接、权限审批、多用户与项目隔离、模型网关、额度账本、三批实施和验收；尚未创建独立产品服务，不能把当前 owner 实例直接当作共享多用户产品。
+
 ## 仓库结构
 
 - `dsh-workbench/`：工作台前端、Host 接口、知识与文档管理、测试。
@@ -66,7 +70,7 @@ sh -n deploy/entrypoint.sh
 node --check deploy/healthcheck.mjs
 ```
 
-已在真实 ECS 完成一个 `owner` 实例的私有部署验证：认证、管家接口、中文 PDF、可编辑 PPTX 和重启持久化通过。当前通过本机 SSH 隧道访问，尚未开放公网；模型配置及真实模型任务待验证。实际状态与验收边界见 [部署验证记录](deploy/preparation-status.md)。
+已在真实 ECS 部署 `owner` 实例，当前版本 1.24.1；已完成来源受限的本人 IP HTTP 认证、管家/手册接口与 WebSocket 协议验收，保留 SSH 隧道访问方式。浏览器完整交互与真实模型任务仍待验收；当前不是公共多用户产品。历史文档生成与重启验证、实际状态和边界见 [部署验证记录](deploy/preparation-status.md)。
 
 ## 验证
 
@@ -89,3 +93,5 @@ npm test
 若开始任务时提示后端接口未就绪，需重启 DSH Host；仅刷新前端不能加载新增的 Host 路由。
 
 阶段进度、下一步入口、任务队列与插件保护原则见 [阶段引导说明](dsh-workbench/docs/stage-guidance.md)。
+
+本人 IP 验证与后续域名 HTTPS 切换见 [部署指南 4A](deploy/README.md#4a-备案等待期间的本人-ip-验证)。临时 IP 入口须限制本人来源、保留原生认证；HTTP 只用于非敏感验证，实际启用状态见部署记录。

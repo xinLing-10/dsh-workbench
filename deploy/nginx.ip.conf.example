@@ -1,0 +1,23 @@
+# Personal validation only. Replace all placeholders and restrict the cloud rule too.
+# HTTP is unencrypted. Keep native DSH authentication enabled.
+server {
+    listen BIND_IPV4:PUBLIC_PORT;
+    server_name PUBLIC_IPV4;
+    allow ALLOWED_CLIENT_IPV4;
+    deny all;
+    client_max_body_size 50m;
+    access_log off;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    location / {
+        proxy_pass http://127.0.0.1:INSTANCE_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }
+}

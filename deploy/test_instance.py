@@ -19,4 +19,13 @@ class ConfigurationTests(unittest.TestCase):
     def test_https_origin_is_passed_to_host(self):
         c=configuration('alice',3081,'image:a','https://alice.example.com/')
         self.assertEqual(c['services']['workbench']['environment']['WORKBENCH_PUBLIC_URL'],'https://alice.example.com/')
+
+    def test_ip_http_requires_explicit_opt_in_and_keeps_loopback(self):
+        c=configuration('owner',3081,'image:a','http://8.153.164.227:8083/',True)
+        service=c['services']['workbench']
+        self.assertEqual(service['ports'],['127.0.0.1:3081:3080'])
+        self.assertEqual(service['environment']['WORKBENCH_ALLOW_IP_HTTP'],'1')
+        for url in ['http://example.com:8083/','http://8.153.164.227/','http://8.153.164.227:80/','http://8.153.164.227:8083/path','http://u:p@8.153.164.227:8083/']:
+            with self.assertRaises(ValueError):configuration('owner',3081,'image:a',url,True)
+
 if __name__=='__main__': unittest.main()
