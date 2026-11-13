@@ -1,3 +1,4 @@
+import { learningSources, learningContext, learningPrompt, learningReply, presentLearning } from './learning.js';
 import { deriveManagerPresentation } from './manager-presentation.js';
 import { parseReply, prepareBlocks, presentMessage } from './manager-message.js';
 import { randomUUID, createHash } from 'node:crypto';
@@ -157,7 +158,7 @@ function writtenCount(job, review) {
  * stage's documents actually exist on disk.
  */
 export function progressOf(job, review, nowMs = Date.now()) {
-  const labels = JOB_STEPS[job.kind === 'conversation' ? 'conversation' : 'work'];
+  const labels = JOB_STEPS[['conversation','learning'].includes(job.kind) ? 'conversation' : 'work'];
   const written = writtenCount(job, review);
   const bad = ['failed', 'cancelled', 'uncertain'].includes(job.status);
   let current;
@@ -170,7 +171,7 @@ export function progressOf(job, review, nowMs = Date.now()) {
       current = 2;
       break;
     case 'running':
-      current = job.kind === 'conversation' ? 3 : written > 0 ? 4 : 3;
+      current = ['conversation','learning'].includes(job.kind) ? 3 : written > 0 ? 4 : 3;
       break;
     case 'awaiting_review':
     case 'needs_input':
@@ -180,7 +181,7 @@ export function progressOf(job, review, nowMs = Date.now()) {
       current = labels.length;
       break;
     case 'failed':
-      current = job.kind === 'conversation' ? 3 : written > 0 ? 5 : 3;
+      current = ['conversation','learning'].includes(job.kind) ? 3 : written > 0 ? 5 : 3;
       break;
     case 'cancelled':
       current = 3;
@@ -243,6 +244,11 @@ export function createManagerService(deps) {
     doc.messages.push({ id: randomUUID(), role, text: safeText(text, 10000), ...(blocks ? {blocks} : {}), time: now() });
     doc.messages = doc.messages.slice(-200);
   }
+  function sayJob(doc,job,text) {
+    if(job?.kind!=='learning')return say(doc,text);
+    doc.learning.messages.push({id:randomUUID(),role:'assistant',text,time:now()});
+    doc.learning.messages=doc.learning.messages.slice(-100);
+  }
   async function register(root, id) {
     known.set(`${root}\0${id}`, { root, id });
     registryTail = registryTail.catch(() => {}).then(() => deps.saveRegistry([...known.values()]));
@@ -264,7 +270,7 @@ export function createManagerService(deps) {
     const stage = nextStage(doc, state);
     const stages = MANAGER_MODES[doc.contract?.mode]?.stages || [];
     const complete = stages.length > 0 && !stage && !doc.jobs.some(j => ACTIVE.has(j.status) || j.status === 'uncertain');
-    const result = { ...doc, messages: doc.messages.map(m => presentMessage(m, doc.answers || {})), jobs: doc.jobs.map(({ prompt, ...job }) => ({ ...job, progress: progressOf(job, review) })), nextStage: stage || null, complete, available: !!deps.adapter(), review,
+    const result = { ...doc, learning: presentLearning(doc.learning), messages: doc.messages.map(m => presentMessage(m, doc.answers || {})), jobs: doc.jobs.map(({ prompt, ...job }) => ({ ...job, progress: progressOf(job, review) })), nextStage: stage || null, complete, available: !!deps.adapter(), review,
       buildChecks: state.stageData.build.confirmations,
       outputs: stages.flatMap(s => Object.entries(review.stages[s].hashes).filter(([, hash]) => hash).map(([name, hash]) => ({ name, hash, stage: s, title: TITLES[s], confirmed: state.stageData[s].confirmed }))) };
     return {...result,presentation:deriveManagerPresentation(result,state)};
@@ -277,6 +283,26 @@ export function createManagerService(deps) {
     if (body.revision !== doc.revision) throw new Error('项目已更新，请刷新后重试；输入内容会保留。');
     const active = doc.jobs.findLast(j => ACTIVE.has(j.status) || j.status === 'uncertain');
     switch (body.action) {
+      case 'learning-sources': {
+        assertIdle(doc);
+        doc.learning ||= {messages:[],paths:[]};
+        doc.learning.catalog = await learningSources(root,id);
+        break;
+      }
+      case 'learn': {
+        assertIdle(doc); adapter();
+        const text=safeText(body.text,8000);
+        if(!text)throw new Error('请填写想了解的问题。');
+        const context=await learningContext(root,id,body.paths);
+        doc.learning ||= {messages:[],paths:[]};
+        doc.learning.paths=[...new Set(body.paths)];
+        doc.learning.messages.push({id:randomUUID(),role:'user',text,time:now()});
+        doc.learning.messages=doc.learning.messages.slice(-100);
+        const evidence={...context,sources:context.sources.map(({text,...s})=>s)};
+        makeJob(doc,'learning',{evidence,prompt:learningPrompt(doc.learning.messages,text,context)});
+        break;
+      }
+
       case 'configure': {
         assertIdle(doc);
         if (doc.jobs.length || doc.delivery) throw new Error('执行后的交付约定不可覆盖，请在详细工作区新建一轮。');
@@ -342,11 +368,11 @@ export function createManagerService(deps) {
       }
       case 'cancel': {
         if (!active) throw new Error('没有正在执行的任务。');
-        if (!active.sessionId || active.status === 'queued' || (!active.submissionAttempted && active.status === 'uncertain')) { active.status = 'cancelled'; say(doc, '已取消尚未执行的安排。'); }
+        if (!active.sessionId || active.status === 'queued' || (!active.submissionAttempted && active.status === 'uncertain')) { active.status = 'cancelled'; sayJob(doc, active, '已取消尚未执行的安排。'); }
         else {
           await adapter().cancel(active.sessionId);
           active.status = 'cancelling'; active.cancelRequestedAt = now();
-          say(doc, '已请求停止，正在等待执行服务确认。已生成的文件会保留。');
+          sayJob(doc, active, '已请求停止，正在等待执行服务确认。已生成的文件会保留。');
         }
         break;
       }
@@ -494,8 +520,8 @@ export function createManagerService(deps) {
         // Persist the intent before any external side effect. No automatic resend after uncertainty.
         job.status = 'creating'; job.sessionId = randomUUID();
         await save(root, doc);
-        const preset = job.kind === 'conversation' ? 'personal-manager' : PRESETS[job.stage];
-        job.sessionId = await adapter().create({ root, preset, id: job.sessionId, title: job.kind === 'conversation' ? '项目管家' : `管家代办 · ${TITLES[job.stage]}` });
+        const preset = ['conversation','learning'].includes(job.kind) ? 'personal-manager' : PRESETS[job.stage];
+        job.sessionId = await adapter().create({ root, preset, id: job.sessionId, title: ['conversation','learning'].includes(job.kind) ? (job.kind==='learning'?'项目陪学':'项目管家') : `管家代办 · ${TITLES[job.stage]}` });
         job.status = 'submitting'; await save(root, doc);
         if (job.kind === 'work') {
           state.stageSessions[job.stage] = job.sessionId;
@@ -508,16 +534,21 @@ export function createManagerService(deps) {
       }
       if (job.status === 'creating' || job.status === 'submitting') {
         job.status = 'uncertain'; job.error = '服务在提交任务期间中断。为避免重复执行，请查看执行会话并核对，再选择重新检查或停止。';
-        say(doc, job.error); await save(root, doc); return;
+        sayJob(doc, job, job.error); await save(root, doc); return;
       }
       const result = await adapter().read(job.sessionId);
       if (!result.terminal) return;
       job.finishedAt = now(); job.reason = result.reason;
       if (job.status === 'cancelling' || result.reason === 'aborted') {
-        job.status = 'cancelled'; say(doc, '执行服务已结束该任务。已产生的文件仍保留，请在继续前核对。');
+        job.status = 'cancelled'; sayJob(doc, job, '执行服务已结束该任务。已产生的文件仍保留，请在继续前核对。');
       } else if (result.reason !== 'completed') {
         job.status = 'failed'; job.error = `执行没有正常完成（${describeReason(result.reason, result.detail)}），可以查看处理详情。`;
-        say(doc, job.error);
+        sayJob(doc, job, job.error);
+      } else if (job.kind === 'learning') {
+        const reply=learningReply(result.text,job.evidence);
+        doc.learning.messages.push({id:randomUUID(),role:'assistant',...reply,evidence:job.evidence,time:now()});
+        doc.learning.messages=doc.learning.messages.slice(-100);
+        job.status='completed';
       } else if (job.kind === 'conversation') {
         if (!safeText(result.text, 8000)) throw new Error('这次未收到有效管家回复，请核对会话。');
         const reply = parseManagerReply(result.text);
@@ -543,7 +574,7 @@ export function createManagerService(deps) {
       delete job.prompt; await save(root, doc);
     } catch (error) {
       job.status = error.code === 'INVALID_MANAGER_REPLY' ? 'failed' : job.submissionAttempted ? 'uncertain' : 'failed'; job.error = safeText(String(error.message || error), 2000);
-      say(doc, `处理暂时停下来了：${job.error}。已保存记录；请检查任务后继续。`); await save(root, doc);
+      sayJob(doc, job, `处理暂时停下来了：${job.error}。已保存记录；请检查任务后继续。`); await save(root, doc);
     }
   }
   return {

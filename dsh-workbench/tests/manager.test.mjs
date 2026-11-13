@@ -309,3 +309,33 @@ test('revising a never-approved document offers the new arrangement instead of s
  const f=await fixture();await setup(f);await f.fill();assert.equal((await f.view()).presentation.phase,'needs_review');
  const result=await f.call({action:'revise',stage:'spec',text:'同一时段支持两位客人'});assert.equal(result.proposal.kind,'revision');assert.equal(result.presentation.phase,'ready_to_start');assert.equal(result.presentation.primaryAction.proposalId,result.proposal.id);assert.equal(f.state.stageData.spec.confirmed,false);
 });
+
+test('learning works before a delivery contract and cannot create stage proposals or mutate source',async()=>{
+ const f=await fixture();
+ await writeFile(join(f.root,'README.md'),'# 预约工具\n客人可以预约。');
+ const beforeState=JSON.stringify(f.state);
+ const sources=await f.call({action:'learning-sources'});assert.ok(sources.learning.catalog.files.includes('README.md'));
+ const requestId=randomUUID();
+ const queued=await f.call({action:'learn',text:'原理导读',paths:['README.md'],requestId});
+ await f.call({action:'learn',text:'原理导读',paths:['README.md'],requestId,revision:queued.revision-1});
+ assert.equal((await f.view()).jobs.length,1);
+ assert.equal((await f.view()).contract,null);
+ await f.service().tick();
+ assert.equal([...f.sessions.values()].at(-1).preset,'personal-manager');
+ assert.match(f.submits[0].prompt,/1: # 预约工具/);
+ await f.finish(JSON.stringify({version:2,blocks:[{type:'summary',text:'这个工具帮助客人预约 [S1:L1-L2]。'}],proposal:{stage:'spec',instruction:'开始开发'}}));
+ const result=await f.view();assert.equal(result.jobs[0].status,'completed');assert.equal(result.proposal,null);assert.equal(result.messages.length,0);
+ assert.equal(result.learning.messages.length,2);assert.equal(result.learning.messages[1].evidence.sources[0].id,'S1');
+ assert.ok(!JSON.stringify(result.jobs).includes('1: # 预约工具'));
+ assert.equal(JSON.stringify(f.state),beforeState);assert.equal(await readFile(join(f.root,'README.md'),'utf8'),'# 预约工具\n客人可以预约。');
+ await f.restart();assert.equal((await f.view()).learning.messages.length,2);
+});
+
+test('learning preserves existing development proposal and survives supervisor restart without resend',async()=>{
+ const f=await fixture();await setup(f);const p=await f.propose();
+ await f.call({action:'learn',text:'什么是需求？',paths:[]});await f.service().tick();
+ const count=f.submits.length;await f.restart();await f.service().tick();assert.equal(f.submits.length,count);
+ await f.finish('需求就是你希望产品解决的问题。');
+ assert.equal((await f.view()).proposal.id,p.id);
+ assert.equal((await f.view()).learning.messages.length,2);
+});

@@ -6012,12 +6012,48 @@ ${text.trim().slice(0, 20_000)}
       ]);
     }
 
+    function ManagerLearning({data,locked,reason,mutate,showToast,storageKey,openSession}) {
+      const learning=data.learning || {messages:[],paths:[]};
+      const [draft,setDraft]=React.useState(()=>{try{return localStorage.getItem(storageKey+':draft') || '';}catch{return '';}});
+      const [paths,setPaths]=React.useState(()=>{try{const saved=JSON.parse(localStorage.getItem(storageKey+':paths') || 'null');return Array.isArray(saved)?saved.filter(p=>typeof p==='string').slice(0,12):(learning.paths || []);}catch{return learning.paths || [];}});
+      React.useEffect(()=>{try{localStorage.setItem(storageKey+':draft',draft);localStorage.setItem(storageKey+':paths',JSON.stringify(paths));}catch{}},[draft,paths,storageKey]);
+      const [sourcesOpen,setSourcesOpen]=React.useState(false);
+      const logRef=React.useRef(null);
+      React.useEffect(()=>{logRef.current?.scrollTo(0,logRef.current.scrollHeight);},[learning.messages.at(-1)?.id]);
+      const task=data.jobs.findLast(j=>['queued','creating','submitting','running','cancelling','uncertain'].includes(j.status));
+      const send=async text=>{if(await mutate({action:'learn',text,paths}))setDraft('');};
+      const catalog=[...new Set([...(learning.catalog?.files || []),...paths])];
+      return h('section',{className:'dshpm-conversation dshpm-learning','aria-label':'项目陪学'},[
+        h('h2',{key:'title'},'一起学懂这个项目'),
+        h('p',{key:'intro',className:'dshwb-hint'},'从一个问题开始，不需要懂技术。讲解会使用你选择的项目资料；学习不会修改产品代码或确认交付成果。'),
+        h('div',{key:'sources',className:'dshpm-learningSources'},[
+          h(Button,{key:'open',disabled:locked,disabledReason:reason,onClick:async()=>{if(sourcesOpen){setSourcesOpen(false);return;}if(await mutate({action:'learning-sources'}))setSourcesOpen(true);}},sourcesOpen?'收起学习资料':`选择学习资料 · ${paths.length} 份`),
+          h('p',{key:'notice',className:'dshwb-hint'},'只有发送问题时才会把选中内容交给当前配置的模型服务。请先确认不含个人资料、密钥或商业敏感内容。未选资料时只能讲通用知识。'),
+          sourcesOpen?h('div',{key:'picker',className:'dshpm-sourcePicker'},[
+            h('p',{key:'help'},'先选项目说明和一个功能的源码即可，最多 12 份。不会自动把整个项目发给模型。'),
+            learning.catalog?.limited?h('p',{key:'limit',role:'status'},'目录较大，只列出部分资料；可先从项目说明开始。'):null,
+            !catalog.length?h('p',{key:'empty'},'没有找到适合的文本资料。请确认已选择业务项目文件夹。'):null,
+            ...catalog.map(path=>h('label',{key:path},h('input',{type:'checkbox',checked:paths.includes(path),onChange:()=>{if(locked){showToast(reason);return;}if(paths.includes(path))setPaths(paths.filter(p=>p!==path));else if(paths.length>=12)showToast('每次最多选择 12 份资料，请先取消一份。');else setPaths([...paths,path]);}}),h('span',null,path)))
+          ]):null
+        ]),
+        h('div',{key:'log',ref:logRef,className:'dshpm-messages',role:'log','aria-label':'项目陪学对话'},learning.messages.length?learning.messages.map(m=>h('div',{key:m.id},[
+          h(ManagerMessage,{key:'message',message:m,locked:true,lockedReason:'学习问题请直接在下方输入。'}),
+          m.evidence?h('details',{key:'evidence',className:'dshpm-learningEvidence'},h('summary',null,'本轮资料与缺口'),h('p',null,'这是该次讲解收到的资料快照，不代表每条结论都已验证；项目更新后请重新提问。'),h('ul',null,m.evidence.sources.map(source=>h('li',{key:source.id},`${source.id} · ${source.path} · 1–${source.lines} 行 · ${source.hash.slice(0,12)}${source.truncated?' · 部分摘录':''}`))),...m.evidence.gaps.map((gap,i)=>h('p',{key:i},gap))):null
+        ])):h('p',null,'可以问：“我完全不懂电脑，这个产品是怎么运作的？”也可以先让我做一份原理导读。')),
+        task?h('div',{key:'progress',role:'status'},h('p',null,task.kind==='learning'?'管家正在准备讲解…':'开发任务正在处理，可先阅读学习记录。'),task.error?h('p',null,task.error):null,task.sessionId?h(Button,{onClick:()=>openSession(task.sessionId)},'查看处理详情'):null,h(Button,{disabled:!data.available || task.status==='cancelling',disabledReason:!data.available?'执行服务尚未连接。':'已请求停止，请等待结束。',onClick:()=>mutate({action:task.status==='uncertain'?'recheck':'cancel'})},task.status==='uncertain'?'重新检查状态':'停止当前任务')):null,
+        !task && data.jobs.at(-1)?.kind==='learning' && ['failed','uncertain','cancelled'].includes(data.jobs.at(-1)?.status)?h('p',{key:'failure',role:'alert'},data.jobs.at(-1).error || '本次学习已停止，可以重新提问。'):null,
+        h('div',{key:'starters',className:'dshpm-starters'},[['原理导读','请根据所选资料，带我从零认识这个产品：用途、主要组成和一条操作流程。'],['换个生活例子','我没有听懂刚才的解释，请用更简单的生活例子重新讲。'],['看看设计思路','请解释所选资料能证明的设计思路和取舍，缺少依据的部分请明确说明。']].map(([label,text])=>h(Button,{key:label,disabled:locked || !data.available,disabledReason:reason,onClick:()=>setDraft(text)},label))),
+        h('form',{key:'composer',className:'dshpm-composer',onSubmit:e=>{e.preventDefault();send(draft);}},h('label',null,'你想弄懂什么？',h('textarea',{className:'dshwb-input',rows:2,value:draft,maxLength:8000,onChange:e=>setDraft(e.target.value),placeholder:'不用担心问得简单，直接说哪里不明白。'})),h(Button,{type:'submit',kind:'primary',disabled:locked || !data.available || !draft.trim(),disabledReason:!draft.trim()?'请先填写想了解的问题。':reason},'请管家讲解'))
+      ]);
+    }
+
     function PersonalManagerPage(props) {
       const { state, meta, store } = useWorkbench();
       const copy = copyFor(useLocaleId(props.localeRuntime));
       const [managerMode,setManagerMode]=React.useState(readManagerMode);
       const [simpleResultsOpen,setSimpleResultsOpen]=React.useState(false);
       const [showProgress,setShowProgress]=React.useState(false);
+      const [learningOpen,setLearningOpen]=React.useState(false);
       const changeManagerMode = value => {setManagerMode(value);try{localStorage.setItem('dshwb-manager-mode',value);}catch{}};
       const [rawData, setData] = React.useState(null);
       const data=rawData?.boardId===state.boardId?rawData:null;
@@ -6050,7 +6086,7 @@ ${text.trim().slice(0, 20_000)}
       const identityRef = React.useRef(identity); identityRef.current = identity;
       const draftKey = `dshwb-manager-draft:${identity}`;
       React.useEffect(() => {
-        setData(null); setError(''); setGoal(state.project.goal || ''); setName(state.project.name || '');
+        setLearningOpen(false); setData(null); setError(''); setGoal(state.project.goal || ''); setName(state.project.name || '');
         setSelectedStage('spec'); setReviewed(false); setChecks([]); setRevisionText(''); setSimpleResultsOpen(false); setShowProgress(false);
         setDraftOwner(identity);
         try { setDraft(localStorage.getItem(draftKey) || ''); } catch { setDraft(''); }
@@ -6201,7 +6237,7 @@ ${text.trim().slice(0, 20_000)}
               [['documents', '我的成果'], ['decisions', '等我确认'], ['history', '项目记录']].map(([value, title]) => h('button', { key: value, type: 'button', 'aria-pressed': tab === value, onClick: () => setTab(value) }, title))),
             tab === 'history' ? h('div', { key: 'history' }, h('h2', null, '项目记录'), h('p', null, `交付目标：${data.contract.goal}`),
               h('p', { className: 'dshwb-hint' }, '需求文档提供 Word 和 Markdown；其他文档目前提供 Markdown。'),
-              ...data.jobs.map(j => h('article', { key: j.id, className: 'dshpm-record' }, h('strong', null, j.kind === 'conversation' ? '管家沟通' : MANAGER_STAGE_TITLES[j.stage]),
+              ...data.jobs.map(j => h('article', { key: j.id, className: 'dshpm-record' }, h('strong', null, j.kind === 'learning' ? '项目陪学' : j.kind === 'conversation' ? '管家沟通' : MANAGER_STAGE_TITLES[j.stage]),
                 h('p', null, MANAGER_JOB_LABELS[j.status]), j.error ? h('p', null, j.error) : null,
                 j.sessionId ? h(Button, { onClick: () => props.openSession(j.sessionId) }, '查看处理记录') : null))) : [
               h('h2', { key: 'title' }, tab === 'decisions' ? '阅读并确认具体版本' : '文档也是你的正式成果'),
@@ -6244,7 +6280,7 @@ ${text.trim().slice(0, 20_000)}
             ],
           ]):null;
       return h('div', { className: 'dshpm-page'+(simple?' dshpm-simple':''), 'data-testid': 'personal-manager-page' }, [
-        h('style', { key: 'style' }, CSS + MANAGER_CSS),
+        h('style', { key: 'style' }, CSS + MANAGER_CSS + '.dshpm-learning{max-width:900px;margin:0 auto;width:100%;box-sizing:border-box}.dshpm-sourcePicker{max-height:260px;overflow:auto;padding:12px;border:1px solid var(--border-color,#7774);border-radius:10px}.dshpm-sourcePicker label{display:flex;align-items:flex-start;gap:8px;padding:6px 0;overflow-wrap:anywhere}.dshpm-sourcePicker input{flex-shrink:0}.dshpm-learningEvidence{margin:0 12px 18px;font-size:13px;overflow-wrap:anywhere}.dshpm-learning .dshpm-messages{min-height:180px;max-height:55vh}.dshpm-learningSources{padding:12px 0}'),
         h(Toast, { key: 'toast', toast }),
         h('header', { key: 'header', className: 'dshpm-header' }, [
           h('div', { key: 'title' }, h('p', { className: 'dshpm-eyebrow' }, '你的项目管家'), h('h1', null, state.project.name || (simple?'项目管家':'一起把想法做出来')),
@@ -6252,6 +6288,7 @@ ${text.trim().slice(0, 20_000)}
           h('div', { key: 'actions', className: 'dshpm-actions' },[
             h('div',{key:'mode',className:'dshwb-tabGroup','aria-label':'管家显示模式',role:'group'},[['simple','简洁模式'],['full','完整管家']].map(([value,label])=>h('button',{key:value,type:'button','aria-pressed':managerMode===value,onClick:()=>changeManagerMode(value)},label))),
             simple && data?.contract?h(Button,{key:'results',onClick:()=>{setTab('documents');setSimpleResultsOpen(true);}},`我的成果 · ${data.outputs.length}`):null,
+            h(Button,{key:'learning',disabled:!data,disabledReason:'正在加载项目，请稍等。',onClick:()=>setLearningOpen(v=>!v)},learningOpen?'返回项目工作':'带我学懂这个项目'),
             h(Button,{key:'help',onClick:()=>window.open('/workbench/guide','_blank','noopener')},'使用手册'),
             h('details',{key:'more',className:'dshpm-more'},h('summary',null,'更多'),
               h(Button, { disabled: busy, disabledReason: '正在处理当前操作，请等待完成后再试。', onClick: selectProject }, '选择项目文件夹'),
@@ -6263,7 +6300,7 @@ ${text.trim().slice(0, 20_000)}
           h('p', null, error || meta.error || '暂时无法连接工作台，输入内容会保留。'), h(Button, { onClick: () => { setRetry(n => n + 1); store.hydrate(true); } }, '重新连接')) : null,
         !data && !error ? h('p', { key: 'loading', role: 'status' }, '正在找回你的项目…') : null,
         managerMode==='simple' && data && !supportsManagerPresentation(data.presentation)?h('p',{key:'protocol',role:'status'},'当前服务尚不支持简洁模式，暂时展示完整管家。'):null,
-        data && !data.contract ? h(ManagerSetup,{key:identity,name,goal,scenario,setName,setGoal,setScenario,busy,onConfigure:configure}) : data ? h('div', { key: 'layout', className: 'dshpm-layout' }, [
+        learningOpen && data ? h(ManagerLearning,{key:identity+'-learning',storageKey:'dshwb-learning:'+identity,data,locked,reason:managerReason,mutate,showToast,openSession:props.openSession}) : data && !data.contract ? h(ManagerSetup,{key:identity,name,goal,scenario,setName,setGoal,setScenario,busy,onConfigure:configure}) : data ? h('div', { key: 'layout', className: 'dshpm-layout' }, [
           h('section', { key: 'chat', className: 'dshpm-conversation', 'aria-label': '和管家说' }, [
             !simple?h('h2', { key: 'title' }, '和管家说'):null,
             !data.available ? h('p', { key: 'unavailable', role: 'alert' }, '管家执行服务尚未连接，请重启 DSH Host。') : null,
@@ -8321,7 +8358,7 @@ textarea.dshwb-input { resize: vertical; }
 
     return {
       inject: ['slots', 'locale', 'uiWorkspace', 'sessions', 'layout'],
-      __test: { ManagerThread, managerBlocks, MessageMarkdown, ManagerMessage, Button, useToast, disabledToastListeners, supportsManagerPresentation, ManagerActionCard, ManagerResultsSheet, managerApprovalReason, ManagerSetup, managerModePreference },
+      __test: { ManagerLearning, ManagerThread, managerBlocks, MessageMarkdown, ManagerMessage, Button, useToast, disabledToastListeners, supportsManagerPresentation, ManagerActionCard, ManagerResultsSheet, managerApprovalReason, ManagerSetup, managerModePreference },
 
       apply(ctx) {
         const localeRuntime = ctx.locale;
