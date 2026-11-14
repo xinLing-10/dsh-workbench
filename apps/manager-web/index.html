@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>项目管家</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body data-view="entry">
+  <aside class="sidebar" aria-label="项目导航">
+    <a class="brand" href="/" aria-label="项目管家首页"><span class="brand-mark" aria-hidden="true">✳</span><span>项目管家<small>把想法，变成作品</small></span></a>
+    <button type="button" id="sidebar-new" class="new-project-button"><span aria-hidden="true">＋</span> 新建项目</button>
+    <div class="sidebar-label" id="sidebar-label">我的项目</div>
+    <nav id="sidebar-projects" aria-label="我的项目"></nav>
+    <nav id="admin-nav" class="admin-nav" aria-label="服务控制台" hidden><p class="sidebar-label">管理工作空间</p><button type="button" data-admin-section="overview" aria-current="page"><span aria-hidden="true">◫</span> 服务概览</button><button type="button" data-admin-section="budgets"><span aria-hidden="true">◉</span> 额度与用量</button><button type="button" data-admin-section="executions"><span aria-hidden="true">▤</span> 任务与 Worker</button><button type="button" data-admin-section="invitations"><span aria-hidden="true">＋</span> 邀请码</button><button type="button" data-admin-section="audit"><span aria-hidden="true">↺</span> 管理记录</button></nav><div class="sidebar-bottom"><span class="helper-icon" aria-hidden="true">✧</span><div>每一步，都有管家陪你<small>说清想法 · 一起完成 · 学懂原理</small></div></div>
+  </aside>
+  <header class="topbar">
+    <div class="workspace-label"><span class="status-dot" aria-hidden="true"></span> 你的专属工作空间</div>
+    <div class="row account"><span class="muted" id="whoami"></span><button id="admin-open" hidden>服务管理</button></div>
+  </header>
+
+  <main id="app">
+    <section id="admin" hidden aria-labelledby="admin-title">
+      <header class="console-header"><div><p class="eyebrow">项目管家 / 服务管理</p><h1 id="admin-title">服务控制台</h1><p class="muted">掌握运行状况，让每一次服务都有据可查。</p></div><div class="row"><button id="admin-back">返回项目</button><button id="admin-refresh" class="primary">刷新数据 ↻</button></div></header>
+      <div class="console-mobile-nav" aria-label="控制台分区"><button type="button" data-admin-section="overview" aria-current="page">概览</button><button type="button" data-admin-section="budgets">额度</button><button type="button" data-admin-section="executions">任务</button><button type="button" data-admin-section="invitations">邀请</button><button type="button" data-admin-section="audit">记录</button></div>
+      <div class="console-status"><span id="admin-environment" role="status"></span><span id="admin-updated" class="muted"></span></div><p id="admin-result" role="status"></p>
+      <section data-admin-panel="overview" aria-label="服务概览">
+        <div class="console-section-heading"><div><h2>服务概览</h2><p class="muted">当前控制实例的真实快照，点击刷新获取最新状态。</p></div><span class="console-chip">TOKEN 计量</span></div>
+        <div class="console-metrics" id="admin-metrics"></div>
+        <div class="console-grid"><article class="console-card"><div class="console-card-heading"><h3>最近 7 天模型用量</h3><span class="muted">UTC 自然日</span></div><div id="admin-trend" class="usage-trend" aria-label="最近七天已结算 token"></div><p class="muted">仅统计本服务已结算 token；未知用量保留预占，不计入已结算曲线。不是人民币账单。</p></article><article class="console-card"><div class="console-card-heading"><h3>服务就绪检查</h3><span class="muted">当前配置与握手</span></div><ul class="readiness-list" id="admin-readiness"></ul></article></div>
+        <div class="console-grid"><article class="console-card"><div class="console-card-heading"><h3>需要关注</h3><button type="button" data-admin-section="budgets" class="text-button">查看用量 →</button></div><div id="admin-attention"></div></article><article class="console-card"><div class="console-card-heading"><h3>API 运行信息</h3><span class="muted">当前 API 进程</span></div><dl id="admin-process" class="process-list"></dl><p class="muted">不是宿主机或 Worker 的资源监控，不提供进程重启与服务器命令执行。</p></article></div>
+      </section>
+      <section data-admin-panel="budgets" aria-label="额度与用量" hidden><div class="console-section-heading"><div><h2>额度与用量</h2><p class="muted">用户、项目与全局三层均需可用。调整额度不重发任务，也不批准工具。</p></div></div>
+      <h2>用户、项目与全局额度</h2><div class="admin-table"><table><thead><tr><th>范围</th><th>对象</th><th>周期</th><th>上限</th><th>已用</th><th>预占</th><th>可用</th><th>状态</th></tr></thead><tbody id="admin-policies"></tbody></table></div>
+      <form id="admin-policy"><label>范围<select id="budget-scope"><option value="user">用户</option><option value="project">项目</option><option value="global">全局</option></select></label><label>对象<select id="budget-target"></select></label><label>额度周期<select id="budget-window"><option value="month">UTC 自然月</option><option value="day">UTC 自然日</option><option value="lifetime">累计</option></select></label><label>token 上限（0 为暂停）<input id="budget-limit" type="number" min="0" step="1" required></label><label>调整原因<input id="budget-reason" minlength="4" maxlength="1000" required></label><button type="submit">保存额度</button></form>
+      <h2>待核对用量</h2><p>请求中断或没有完整用量回执时保留预占。先到服务商账单核对，再登记实际 token 与凭证；不要填写猜测值。无回执的历史任务不会自动重跑。</p><div id="admin-pending"></div>
+      </section>
+      <section data-admin-panel="executions" aria-label="任务与 Worker" hidden><div class="console-section-heading"><div><h2>任务与 Worker</h2><p class="muted">按项目名称识别任务，执行编号保留用于排查。展示最近 50 项，状态数量为全部操作统计。</p></div></div><div id="admin-queue-counts" class="queue-counts"></div><div class="queue-toolbar"><label>搜索项目、用户或任务<input id="admin-queue-search" type="search" placeholder="输入名称或编号"></label><label>任务状态<select id="admin-queue-filter"><option value="all">全部状态</option><option value="queued">排队中</option><option value="running">执行中</option><option value="waiting">等待回答</option><option value="uncertain">待核对</option><option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option></select></label></div><div class="admin-table"><table><thead><tr><th>项目 / 用户</th><th>状态</th><th>Worker</th><th>更新时间</th><th>任务编号</th></tr></thead><tbody id="admin-queue"></tbody></table></div><h2>已登记 Worker</h2><div id="admin-workers" class="worker-grid"></div><h2>待核对执行回执</h2><ul id="admin-executions"></ul></section>
+      <section data-admin-panel="invitations" aria-label="邀请码管理" hidden>
+        <div class="console-section-heading"><div><h2>邀请码管理</h2><p class="muted">一次性邀请创建普通账号，不授予平台管理员权限，也不会自动分配模型额度。</p></div></div>
+        <p id="invite-gate" role="status"></p>
+        <form id="admin-invite-form" class="console-card invite-form">
+          <label>邀请方式<select id="invite-mode"><option value="new">新建独立租户（推荐）</option><option value="existing">加入已有租户</option></select></label>
+          <label id="invite-name-label">新租户名称<input id="invite-name" maxlength="80" placeholder="例如：张先生的项目空间" required></label>
+          <label id="invite-tenant-label" hidden>已有租户<select id="invite-tenant"></select></label>
+          <label>有效期<select id="invite-hours"><option value="1">1 小时</option><option value="24" selected>24 小时</option><option value="72">3 天</option><option value="168">7 天</option></select></label>
+          <label id="invite-shared-label" class="question-option" hidden><input id="invite-shared" type="checkbox">我确认：受邀账号可访问此租户项目，并按当前账号规则成为租户负责人。</label>
+          <p class="muted">邀请码只在生成成功后显示一次。请及时复制并私下交给指定用户，刷新页面后无法找回明文。</p><button type="submit" id="issue-invite" class="primary">生成一次性邀请码</button>
+        </form>
+        <article id="invite-result" class="console-card" hidden><h3>邀请码已生成</h3><p id="invite-result-meta" class="muted"></p><label>邀请码（仅本次显示）<input id="invite-token" readonly autocomplete="off" spellcheck="false"></label><div class="row"><button type="button" id="copy-invite" class="primary">复制邀请码</button><button type="button" id="hide-invite">隐藏明文</button></div><p id="invite-copy-status" role="status"></p></article>
+        <h2>最近 100 条邀请</h2><p class="muted">只显示使用状态，不提供明文找回。已用邀请码不能再次注册；未启用兑换时，已有邀请码也无法使用。</p><div class="admin-table"><table><thead><tr><th>租户</th><th>状态</th><th>有效至</th><th>使用账号</th><th>邀请编号</th></tr></thead><tbody id="admin-invitations"></tbody></table></div>
+      </section>
+      <section data-admin-panel="audit" aria-label="管理记录" hidden><div class="console-section-heading"><div><h2>管理记录</h2><p class="muted">最近 50 条额度、用量核对与管理员权限变更记录。展开查看详情。</p></div></div><ul id="admin-audit"></ul></section>
+    </section>
+
+    <section id="entry" class="card entry" hidden>
+      <span class="entry-symbol" aria-hidden="true">✳</span><p class="eyebrow">欢迎来到你的创作空间</p><h1>从一个想法开始</h1>
+      <p class="muted">使用邀请码创建账号，或直接登录已有账号。无需配置模型密钥，登录后即可与管家沟通。</p>
+      <form id="login-form" class="stack">
+        <label>邮箱 <input id="email" type="email" autocomplete="username" required></label>
+        <label>密码 <input id="password" type="password" autocomplete="current-password" minlength="8" required></label>
+        <details>
+          <summary>我有邀请码（首次使用）</summary>
+          <label>邀请码 <input id="invite" type="text" autocomplete="off" spellcheck="false" placeholder="填写服务方提供的邀请码"></label>
+          <span class="muted">没有邀请码？请联系服务方获取。</span>
+        </details>
+        <div class="row">
+          <button type="submit" class="primary" id="submit-login">登录</button>
+        </div>
+        <p class="error" id="entry-error" role="alert"></p>
+      </form>
+    </section>
+
+    <section id="projects" class="card" hidden>
+      <div class="row space">
+        <div><p class="eyebrow">一起，让想法落地</p><h1>今天，想继续哪个项目？</h1><p class="muted">每个项目都有自己的对话、资料和成果。</p></div>
+        <button type="button" id="new-project">新建项目</button>
+      </div>
+      <ul id="project-list" class="list"></ul>
+      <p class="muted" id="projects-empty" hidden>还没有项目。新建一个，用一句话说说你想做什么。</p>
+    </section>
+
+    <section id="project" hidden>
+      <header class="project-header">
+        <div class="project-heading"><span class="project-symbol" aria-hidden="true">✧</span><div><p class="eyebrow">和项目管家一起</p><h1 id="project-name"></h1></div></div>
+        <div class="row project-actions"><span class="muted" id="live-state" role="status"></span><button type="button" id="back">所有项目</button><button type="button" id="toggle-artifacts" aria-expanded="false" aria-controls="artifacts">我的成果 <span id="artifact-count">0</span></button></div>
+      </header>
+      <div class="project-layout" id="project-layout">
+        <section class="conversation" aria-label="与管家的对话">
+          <div class="conversation-scroll" id="conversation-scroll" tabindex="0" aria-label="对话记录">
+            <div id="chat-welcome" class="chat-welcome"><span class="welcome-symbol" aria-hidden="true">✳</span><p class="eyebrow">你的想法，值得被认真对待</p><h2>你好，今天想一起完成什么？</h2><p>从一句话开始。管家会帮你理清思路，一步步完成。</p><div class="starter-prompts"><button type="button" data-prompt="我有一个想法，请帮我把需求整理清楚。"><span aria-hidden="true">✧</span> 帮我理清一个想法</button><button type="button" data-prompt="我想改进现有项目，请先帮我分析应该从哪里开始。"><span aria-hidden="true">↗</span> 改进现有的项目</button><button type="button" data-prompt="我想学懂这个项目，请从最基础的原理开始解释。"><span aria-hidden="true">◇</span> 带我学懂这个项目</button></div></div>
+            <ol id="messages" class="messages" aria-label="消息历史"></ol>
+            <div id="interactions" class="stack" aria-live="polite"></div>
+          </div>
+          <button type="button" id="jump-latest" class="jump-latest" hidden>回到最新进展 ↓</button>
+          <div class="composer-wrap"><form id="message-form" class="composer">
+            <label class="sr-only" for="message-text">消息</label>
+            <textarea id="message-text" rows="2" maxlength="8000" placeholder="告诉管家你的想法，我们一起把它实现……"></textarea>
+            <div class="composer-actions"><span class="composer-hint">说想法，也可以随时问为什么</span><div class="row"><button type="button" id="stop-native" hidden>停止当前任务</button><button type="button" id="cancel-simulation" hidden>取消模拟任务</button><button type="submit" class="primary" id="send">发送 <span aria-hidden="true">↑</span></button></div></div>
+          </form><p class="dispatch-note muted" id="dispatch-note" role="status"></p><p class="composer-footnote">重要操作会先征求你的同意，成果由你阅读后确认。</p></div>
+        </section>
+        <aside id="artifacts" class="artifacts-panel" aria-label="我的成果" hidden>
+          <div class="row space panel-header"><div><p class="eyebrow">每一步，都有收获</p><h2>我的成果</h2></div><button type="button" id="close-artifacts" aria-label="关闭成果面板">✕</button></div>
+          <div class="row space panel-intro"><span class="muted">阅读、确认，再带走</span><button type="button" id="refresh-artifacts">刷新</button></div>
+          <ul id="artifact-list" class="list"></ul>
+          <p class="muted empty-artifacts" id="artifacts-empty" hidden><span aria-hidden="true">▤</span>成果会在这里慢慢积累。<br>先和管家聊聊你想做什么。</p>
+          <article id="artifact-view" class="artifact" hidden>
+            <strong id="artifact-name"></strong><span class="muted" id="artifact-meta"></span>
+            <label class="inline">版本 <select id="artifact-version"></select></label>
+            <pre id="artifact-text"></pre>
+            <div class="row"><button type="button" class="primary" id="confirm-artifact">确认这一版</button><button type="button" id="download-artifact">下载</button></div><span class="muted" id="artifact-note"></span>
+          </article>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+# Install into a worker profile whose product API is reachable.
+#   dsh plugin --profile <worker> add link:/path/to/services/worker-bridge
+# Register a unique Worker credential and acquire a lease through the offline control plane.
+- insert:
+    - id: manager-bridge
+      name: '@manager/worker-bridge'
+      config:
+        enabled: false
+        productApiUrl: ''
+        workerSecret: ''
+        leaseId: ''
+        generation: 0
+        operationId: ''
+        workerId: ''
+        tenantId: ''
+        projectId: ''
+        approvalTimeoutMs: 300000
+        questionTimeoutMs: 300000

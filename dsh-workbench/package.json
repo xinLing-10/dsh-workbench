@@ -43,7 +43,9 @@
     "learning-review.js",
     "teaching-eval.js",
     "scripts/evaluate-teaching.mjs",
-    "docs/teaching-eval-cases.json"
+    "docs/teaching-eval-cases.json",
+    "core/",
+    "scripts/check-manager-core.mjs"
   ],
   "dsh": {
     "bundle": {
@@ -57,9 +59,10 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check templates.js && node --check client.js && node --check manager.js && node --check manager-adapter.js && node --check execution-policy.js && node --check manager-message.js && node --check delivery-plan.js && node --check delivery-export.js && node --check manager-presentation.js && node --check learning.js && node --check learning-plan.js && node --check learning-practice.js && node --check learning-materials.js && node --check learning-coach.js && node --check learning-map.js && node --check learning-memory.js && node --check learning-review.js && node --check teaching-eval.js && node --check scripts/evaluate-teaching.mjs",
+    "check": "node --check index.js && node --check artifacts.js && node --check reviews.js && node --check knowledge.js && node --check templates.js && node --check client.js && node --check manager.js && node --check manager-adapter.js && node --check execution-policy.js && node --check manager-message.js && node --check delivery-plan.js && node --check delivery-export.js && node --check manager-presentation.js && node --check learning.js && node --check learning-plan.js && node --check learning-practice.js && node --check learning-materials.js && node --check learning-coach.js && node --check learning-map.js && node --check learning-memory.js && node --check learning-review.js && node --check teaching-eval.js && node --check scripts/evaluate-teaching.mjs && node scripts/check-manager-core.mjs",
     "docs:guide": "node scripts/build-manager-guide.mjs",
-    "eval:teaching": "node scripts/evaluate-teaching.mjs"
+    "eval:teaching": "node scripts/evaluate-teaching.mjs",
+    "docs:admin": "node scripts/build-manager-guide.mjs --admin"
   },
   "dependencies": {
     "markdown-it": "14.3.3",

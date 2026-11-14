@@ -1,0 +1,27 @@
+[Unit]
+Description=Independent manager acceptance API
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+[Service]
+User=manager-acceptance
+Group=manager-acceptance
+WorkingDirectory=/srv/manager-acceptance/release
+EnvironmentFile=/srv/manager-acceptance/private/api.env
+ExecStart=/srv/manager-acceptance/runtime/node services/product-api/server.mjs
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/manager-acceptance/data
+MemoryMax=256M
+CPUQuota=70%
+TasksMax=128
+OOMScoreAdjust=500
+[Install]
+WantedBy=multi-user.target

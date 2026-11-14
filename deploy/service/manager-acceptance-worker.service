@@ -1,0 +1,28 @@
+[Unit]
+Description=Independent manager acceptance Workers
+After=network-online.target docker.service
+Requires=docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=3
+[Service]
+User=manager-acceptance
+Group=manager-acceptance
+SupplementaryGroups=docker
+WorkingDirectory=/srv/manager-acceptance/release
+ExecStart=/srv/manager-acceptance/runtime/node deploy/service/worker-group.mjs /srv/manager-acceptance/private/workers.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/srv/manager-acceptance/data
+MemoryMax=256M
+CPUQuota=70%
+TasksMax=192
+OOMScoreAdjust=500
+[Install]
+WantedBy=multi-user.target

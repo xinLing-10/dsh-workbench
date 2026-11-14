@@ -1,0 +1,24 @@
+/** Unified Worker v1: transport identity is separate from user approval. */
+export const WORKER_PROTOCOL_VERSION=1;
+export const WORKER_EVENT_TYPES=['started','heartbeat','running','completed','cancelled','failed'];
+export const WORKER_TERMINAL=['completed','cancelled','failed'];
+const id=v=>typeof v==='string' && /^[A-Za-z0-9_-]{1,120}$/.test(v);
+export function validateJob(job) {
+  const fields=['protocolVersion','workerId','tenantId','projectId','operationId','leaseId','engineId','generation','payloadHash','text','deadline'];
+  if(!job || Object.keys(job).some(k=>!fields.includes(k)) || job.protocolVersion!==1 || !['workerId','tenantId','projectId','operationId','leaseId','engineId'].every(k=>id(job[k])) || !Number.isSafeInteger(job.generation) || job.generation<1 || !/^[a-f0-9]{64}$/.test(job.payloadHash || '') || typeof job.text!=='string' || !job.text.trim() || Buffer.byteLength(job.text)>32768 || !Number.isFinite(Date.parse(job.deadline)))throw new Error('Invalid worker job');
+  return job;
+}
+export function validateWorkerEvent(event) {
+  const fields=['protocolVersion','engineId','eventId','sequence','type','text','endReason','artifactIds'];
+  if(!event || Object.keys(event).some(k=>!fields.includes(k)) || event.protocolVersion!==1 || !id(event.engineId) || !id(event.eventId) || !Number.isSafeInteger(event.sequence) || event.sequence<1 || !WORKER_EVENT_TYPES.includes(event.type))throw new Error('Invalid worker event');
+  if(event.text!==undefined && (typeof event.text!=='string' || event.text.length>16000))throw new Error('Worker text too large');
+  if(WORKER_TERMINAL.includes(event.type)) {
+    const expected={completed:'completed',cancelled:'aborted',failed:'failed'}[event.type];
+    if(event.endReason!==expected)throw new Error('Missing engine terminal receipt');
+    if(!Array.isArray(event.artifactIds) || event.artifactIds.length>50 || event.artifactIds.some(a=>!id(a)))throw new Error('Invalid artifact receipt');
+  }
+  return event;
+}
+export function sameExecution(a,b) {
+  return ['workerId','tenantId','projectId','operationId','leaseId','generation','engineId','payloadHash'].every(k=>a[k]===b[k]);
+}

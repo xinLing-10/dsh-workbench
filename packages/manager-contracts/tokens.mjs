@@ -1,0 +1,65 @@
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+
+/**
+ * Internal capability tokens between the product API and one worker.
+ *
+ * Format: `v1.<base64url(payload)>.<base64url(hmac)>`. Short lived, bound to
+ * an audience, and (for writes) to the request body digest. HMAC-SHA256 with a
+ * per-worker secret is the first slice; the design calls for Ed25519 rotation
+ * later, which keeps the same payload shape.
+ */
+export const TOKEN_VERSION = 'v1';
+const b64 = (value) => Buffer.from(value).toString('base64url');
+const unb64 = (value) => Buffer.from(value, 'base64url').toString('utf8');
+
+/** @returns the canonical digest used to bind a write request to its body. */
+export function bodyDigest(body) {
+  // JSON's array replacer is a global property whitelist: using only root
+  // keys silently drops nested question/options fields from the signature.
+  const normalize = (value) => {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.keys(value).sort().map((key) => [key, normalize(value[key])]));
+    }
+    return value;
+  };
+  const canonical = JSON.stringify(normalize(body ?? null));
+  return createHash('sha256').update(canonical).digest('base64url');
+}
+
+/** @returns a signed token string. */
+export function signToken(claims, secret, ttlSeconds = 60) {
+  if (typeof secret !== 'string' || secret.length < 16) throw new Error('token secret too short');
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { ...claims, iat: now, exp: now + ttlSeconds };
+  const body = b64(JSON.stringify(payload));
+  const signature = createHmac('sha256', secret).update(`${TOKEN_VERSION}.${body}`).digest('base64url');
+  return `${TOKEN_VERSION}.${body}.${signature}`;
+}
+
+/**
+ * @returns { ok: true, claims } or { ok: false, error }
+ * Errors: format, signature, expired, audience, digest, clock.
+ */
+export function verifyToken(token, secret, { audience, body, now = Date.now(), skewSeconds = 60 } = {}) {
+  if (typeof token !== 'string') return { ok: false, error: 'format' };
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== TOKEN_VERSION) return { ok: false, error: 'format' };
+  const [, payloadPart, signature] = parts;
+  const expected = createHmac('sha256', secret).update(`${TOKEN_VERSION}.${payloadPart}`).digest('base64url');
+  const left = Buffer.from(signature);
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !timingSafeEqual(left, right)) return { ok: false, error: 'signature' };
+  let claims;
+  try {
+    claims = JSON.parse(unb64(payloadPart));
+  } catch {
+    return { ok: false, error: 'format' };
+  }
+  const nowSeconds = Math.floor(now / 1000);
+  if (typeof claims.exp !== 'number' || claims.exp + skewSeconds < nowSeconds) return { ok: false, error: 'expired' };
+  if (typeof claims.iat !== 'number' || claims.iat - skewSeconds > nowSeconds) return { ok: false, error: 'clock' };
+  if (audience !== undefined && claims.aud !== audience) return { ok: false, error: 'audience' };
+  if (body !== undefined && claims.body !== bodyDigest(body)) return { ok: false, error: 'digest' };
+  return { ok: true, claims };
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@manager/product-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone manager BFF skeleton: accounts, tenancy, projects, operations and project events.",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check server.mjs && node --check src/config.mjs && node --check src/db.mjs && node --check src/passwords.mjs && node --check src/auth.mjs && node --check src/http.mjs && node --check src/bridge.mjs && node --check src/app.mjs && node --check src/workers.mjs && node --check worker-admin.mjs && node --check src/dispatcher.mjs && node --check simulate.mjs && node --check src/simulation-flow.mjs && node --check src/real-model-smoke.mjs && node --check probes/run-real-model-smoke.mjs && node --check src/model-budget.mjs && node --check src/budgeted-model.mjs && node --check src/current-deepseek-account.mjs && node --check src/native-readonly.mjs && node --check src/readonly-dispatcher.mjs && node --check readonly-preview.mjs && node --check probes/run-authorized-model-tests.mjs && node --check probes/run-native-budget-smoke.mjs && node --check probes/verify-model-blog.mjs && node --check probes/verify-readonly-browser.mjs && node --check src/native-tools.mjs && node --check src/native-test-plugin.mjs && node --check probes/run-native-interaction-cases.mjs && node --check probes/verify-real-delivery.mjs && node --check probes/verify-real-delivery-browser.mjs && node --check src/manager-core.mjs && node --check src/worker-executions.mjs && node --check src/worker-transport.mjs && node --check probes/run-unified-worker.mjs && node --check src/service-budget.mjs && node --check src/model-gateway.mjs && node --check service-admin.mjs && node --check src/budget-carryover.mjs && node --check probes/service-admin-preview.mjs && node --check src/run-authorization.mjs && node --check src/worker-pool.mjs && node --check src/service-dashboard.mjs && node --check src/admin-invitations.mjs"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

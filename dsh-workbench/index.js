@@ -1,6 +1,8 @@
+import { createProjectState as emptyState, boardSummary } from './core/project-state.js';
+import { persistBoardRecord } from './core/board-records.js';
 import { pdfFont } from './delivery-export.js';
 import { approvedSources, sha256 } from './delivery-plan.js';
-import { createManagerService } from './manager.js';
+import { createProjectServices } from './core/index.js';
 import { createSessionAdapter } from './manager-adapter.js';
 import { executionPolicy } from './execution-policy.js';
 import { knowledgeView, updateKnowledge, contextView, buildContext, readContext } from './knowledge.js';
@@ -151,89 +153,6 @@ const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]'
 
 /** Common local development ports tried by auto-detection. */
 const COMMON_PORTS = [5173, 3000, 4173, 8080, 8000, 5000, 4200];
-
-/**
- * Default state. Kept in lockstep with the Client's `emptyState`; the Host is
- * the final validator, so unknown fields never reach disk.
- * @returns a fresh state object.
- */
-function emptyState() {
-  return {
-    version: 3,
-    project: { name: '', goal: '', createdAt: '' },
-    flow: 'new',
-    round: 1,
-    stage: STAGES[0],
-    sessionId: '',
-    specSessionId: '',
-    stageSessions: { spec: '', design: '', build: '', verify: '', ship: '' },
-    previewUrl: '',
-    stageData: {
-      spec: {
-        input: '',
-        sourceName: '',
-        sourcePath: '',
-        startedAt: '',
-        confirmed: false,
-        confirmedAt: '',
-        reviewNote: '',
-      },
-      design: {
-        mode: 'preset',
-        preset: 'agent',
-        gates: [
-          { id: 'gate-1', text: '核心数据结构：字段、约束与索引', enabled: true },
-          { id: 'gate-2', text: '关键接口：入参、出参与错误码', enabled: true },
-          { id: 'gate-3', text: '关键交互流程：正常路径 + 空态/加载/错误', enabled: true },
-          { id: 'gate-4', text: '权限与角色判断的位置', enabled: true },
-          { id: 'gate-5', text: '数据迁移与向后兼容（如涉及）', enabled: true },
-        ],
-        frontend: '',
-        backend: '',
-        database: '',
-        deployTarget: '',
-        constraints: '',
-        startedAt: '',
-        confirmed: false,
-        confirmedAt: '',
-        reviewNote: '',
-      },
-      build: {
-        confirmations: [
-          { id: 'default-1', text: '核心数据流与模块接口已核对', done: false },
-          { id: 'default-2', text: '关键交互流程已在项目预览中走通', done: false },
-          { id: 'default-3', text: '启动文档 / 部署文档与实际一致', done: false },
-        ],
-        startedAt: '',
-        confirmed: false,
-        confirmedAt: '',
-        reviewNote: '',
-      },
-      verify: {
-        startedAt: '',
-        confirmed: false,
-        confirmedAt: '',
-        reviewNote: '',
-        fixRounds: 0,
-      },
-      ship: {
-        mode: 'none',
-        host: '',
-        port: '',
-        user: '',
-        path: '',
-        method: 'rsync',
-        deployRequested: false,
-        deployStartedAt: '',
-        confirmed: false,
-        confirmedAt: '',
-        reviewNote: '',
-      },
-    },
-    activity: [],
-    updatedAt: '',
-  };
-}
 
 /** @returns whether value is a plain object. */
 function isRecord(value) {
@@ -1016,21 +935,6 @@ function boardFile(root, id) {
 }
 
 /** @returns one roster row for a board. */
-function boardSummary(id, state, name) {
-  const pending = STAGES.find(stage => !state.stageData[stage].confirmed);
-  const stage = pending || 'ship';
-  const title = str(state.project.name).trim() || str(name).trim() || str(state.project.goal).trim().split('\n')[0].slice(0, 80) || `未命名需求 · 第 ${state.round || 1} 轮`;
-  return { id, name: title, goal: str(state.project.goal).slice(0, 2000),
-    flow: state.flow === 'incremental' ? 'incremental' : 'new', round: state.round,
-    stage, confirmed: STAGES.findIndex(key => !state.stageData[key].confirmed) < 0 ? STAGES.length : STAGES.indexOf(stage),
-    stageStarted: Boolean(state.stageData[stage].startedAt),
-    stages: Object.fromEntries(STAGES.map(key => [key, {
-      confirmed: state.stageData[key].confirmed, needsReview: !!state.stageData[key].needsReview,
-      startedAt: state.stageData[key].startedAt, confirmedAt: state.stageData[key].confirmedAt,
-      sessionId: state.stageSessions?.[key] || (key === 'spec' ? state.specSessionId : state.sessionId) || '',
-    }])), updatedAt: state.updatedAt || new Date().toISOString() };
-}
-
 /** Read the roster, or null when the project has none yet. */
 async function readBoardIndex(root) {
   try {
@@ -1079,17 +983,7 @@ async function readBoard(root, id) {
 
 /** Write one board file and refresh its roster row. */
 async function saveBoard(root, index, id, state, name) {
-  const paths = boardPaths(root);
-  await mkdir(paths.boards, { recursive: true });
-  state.stateRevision = nonNegativeInt(state.stateRevision, 0) + 1;
-  await atomicJson(boardFile(root, id), state);
-  const summary = boardSummary(id, state, name === undefined ? '' : name);
-  const existing = index.boards.findIndex((board) => board.id === id);
-  if (existing < 0) index.boards.unshift(summary);
-  else index.boards[existing] = summary;
-  index.boards = index.boards.slice(0, MAX_BOARDS);
-  await writeBoardIndex(root, index);
-  return summary;
+  return persistBoardRecord(root,index,id,state,name === undefined ? '' : name);
 }
 
 /**
@@ -2197,7 +2091,7 @@ function guideHandler(fence) {
 export function apply(ctx) {
   let sessionAdapter = null;
   const registry = () => join(harnessHome(), 'workbench', 'manager-projects.json');
-  const manager = createManagerService({
+  const manager = createProjectServices({
     adapter: () => sessionAdapter,
     exclusive: exclusiveProject,
     onError: (error) => console.warn('workbench manager:', error.message),
@@ -2212,7 +2106,7 @@ export function apply(ctx) {
       const markdown = await readFile(await managedPath(root, base + '需求分析阶段.md'), 'utf8').catch((error) => { if (error.code === 'ENOENT') return ''; throw error; });
       if (markdown.trim()) await writeFile(await managedPath(root, base + '需求分析阶段.docx'), buildDocx(markdown, '需求说明书'));
     },
-  });
+  }).tasks;
   ctx.inject(['sessionController'], (sessionCtx) => {
     sessionAdapter = createSessionAdapter(sessionCtx.sessionController);
     sessionCtx.effect(() => () => { sessionAdapter = null; });

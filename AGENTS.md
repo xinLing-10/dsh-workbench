@@ -11,6 +11,10 @@
 5. 修改后运行 `cd dsh-workbench && npm run docs:guide`，同步生成 `docs/manager-user-guide.html` 离线图文版；核对 Markdown / HTML 的图片、链接、按钮名称、版本和排版。离线 HTML 不应依赖远程图片、脚本、字体或用户凭据。
 6. 若变更影响管家相关的用户操作，完成报告中列出手册更新位置与验证结果。不得把“以后补文档”作为已经完成的交付。
 
+## 客户、管理员与开发者文档分层
+
+客户唯一主手册保持为 `dsh-workbench/docs/manager-user-guide.md`，仅说明客户日常操作、权限决定、成果和使用边界。管理员日常操作主手册为 `dsh-workbench/docs/manager-admin-guide.md`，说明控制台、邀请码、额度和用量/执行核对、审计与异常处理，离线版由 `npm run docs:admin --prefix dsh-workbench` 生成。管理员界面或操作变化必须同步更新此手册、离线版及受影响真实截图。开发者与运维入口为 `dsh-workbench/docs/manager-developer-guide.md`，说明架构、配置、迁移、部署、测试及技术接口，链接管理员手册而非重复维护整套操作步骤。技术细节可链接专题文档，不能要求普通客户执行部署或配置模型密钥。开发文档更新不替代上述客户手册同步规则；内部变更仍在客户手册维护记录注明核对结果。README 必须保留客户、管理员和开发者三类明确入口。
+
 ## 工作台 Agent 的执行边界
 
 工作台内负责业务项目的 Agent 不得修改工作台插件本体代码、文档和配置，也不得通过脚本、路径跳转或符号链接间接修改。保护目录和运行时校验以 `dsh-workbench/execution-policy.js` 为准。发现插件问题时应报告，由维护工作台的明确任务处理。

@@ -1,0 +1,14 @@
+{
+  "name": "@manager/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone manager product contracts: error codes, event types, action whitelist and envelopes.",
+  "exports": {
+    ".": "./index.mjs"
+  },
+  "scripts": {
+    "test": "node --test test.mjs tokens.test.mjs questions.test.mjs",
+    "check": "node --check index.mjs && node --check tokens.mjs"
+  }
+}
