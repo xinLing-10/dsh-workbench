@@ -1,8 +1,9 @@
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import {migrateTaskLinks} from './business-tasks.mjs';
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 13;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS schema_meta (version INTEGER NOT NULL);
@@ -283,6 +284,23 @@ export function openDatabase(path) {
   db.exec('PRAGMA foreign_keys = ON');
   db.exec('PRAGMA busy_timeout = 5000');
   db.exec(SCHEMA);
+  db.exec(`CREATE TABLE IF NOT EXISTS business_tasks(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL REFERENCES tenants(id),project_id TEXT NOT NULL REFERENCES projects(id),title TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('work','learning')),created_at TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS business_tasks_by_project ON business_tasks(project_id,created_at);
+    CREATE TABLE IF NOT EXISTS business_task_operations(task_id TEXT NOT NULL REFERENCES business_tasks(id),operation_id TEXT PRIMARY KEY REFERENCES operations(id));`);
+  db.exec("CREATE TABLE IF NOT EXISTS scheduler_state(id TEXT PRIMARY KEY,last_tenant TEXT)");
+  db.exec('CREATE TABLE IF NOT EXISTS business_learning(task_id TEXT PRIMARY KEY REFERENCES business_tasks(id),plan_json TEXT NOT NULL,revision INTEGER NOT NULL DEFAULT 1)');
+  db.exec('CREATE TABLE IF NOT EXISTS template_exports(task_id TEXT NOT NULL REFERENCES business_tasks(id),request_id TEXT NOT NULL,payload_hash TEXT NOT NULL,artifact_id TEXT NOT NULL REFERENCES artifact_index(id),manifest_json TEXT NOT NULL,PRIMARY KEY(task_id,request_id))');
+  db.exec('CREATE TABLE IF NOT EXISTS core_message_receipts(board_id TEXT NOT NULL,message_id TEXT NOT NULL,event_id INTEGER NOT NULL REFERENCES project_events(id),PRIMARY KEY(board_id,message_id))');
+  db.exec('CREATE TABLE IF NOT EXISTS controller_owners(name TEXT PRIMARY KEY,pid INTEGER NOT NULL,owner TEXT NOT NULL)');
+  db.exec(`CREATE TABLE IF NOT EXISTS conversation_memory(project_id TEXT NOT NULL REFERENCES projects(id),task_scope TEXT NOT NULL,event_id INTEGER NOT NULL REFERENCES project_events(id),role TEXT NOT NULL,excerpt TEXT NOT NULL,source_hash TEXT NOT NULL,PRIMARY KEY(project_id,task_scope,event_id));
+CREATE TABLE IF NOT EXISTS learning_versions(task_id TEXT NOT NULL REFERENCES business_tasks(id),revision INTEGER NOT NULL,plan_json TEXT NOT NULL,at TEXT NOT NULL,PRIMARY KEY(task_id,revision));`);
+  db.exec(`CREATE TABLE IF NOT EXISTS core_bindings(board_id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),task_id TEXT NOT NULL REFERENCES business_tasks(id),actor_user_id TEXT NOT NULL REFERENCES users(id));
+    CREATE TABLE IF NOT EXISTS core_sessions(id TEXT PRIMARY KEY,project_id TEXT NOT NULL REFERENCES projects(id),board_id TEXT NOT NULL,task_id TEXT NOT NULL REFERENCES business_tasks(id),actor_user_id TEXT NOT NULL REFERENCES users(id),kind TEXT NOT NULL,stage TEXT,preset TEXT NOT NULL,operation_id TEXT UNIQUE REFERENCES operations(id),prompt_hash TEXT,request_id TEXT,baseline_json TEXT NOT NULL,created_at TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS core_imports(session_id TEXT PRIMARY KEY REFERENCES core_sessions(id),state TEXT NOT NULL,hashes_json TEXT NOT NULL);`);
+  migrateTaskLinks(db);
+  if (!db.prepare('PRAGMA table_info(projects)').all().some(c=>c.name==='notes')) db.exec("ALTER TABLE projects ADD COLUMN notes TEXT NOT NULL DEFAULT ''");
+  db.exec("CREATE TABLE IF NOT EXISTS project_sources(project_id TEXT NOT NULL REFERENCES projects(id),path TEXT NOT NULL,content TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(project_id,path))");
+  db.exec("CREATE TABLE IF NOT EXISTS service_run_authorization_amendments(sequence INTEGER PRIMARY KEY AUTOINCREMENT,amendment_id TEXT NOT NULL UNIQUE,amendment_json TEXT NOT NULL); CREATE TRIGGER IF NOT EXISTS immutable_budget_amendment_update BEFORE UPDATE ON service_run_authorization_amendments BEGIN SELECT RAISE(ABORT,'budget amendments are append-only'); END; CREATE TRIGGER IF NOT EXISTS immutable_budget_amendment_delete BEFORE DELETE ON service_run_authorization_amendments BEGIN SELECT RAISE(ABORT,'budget amendments are append-only'); END;");
   const columns = db.prepare('PRAGMA table_info(interaction_requests)').all();
   if (!columns.some(c => c.name === 'questions_json')) db.exec("ALTER TABLE interaction_requests ADD COLUMN questions_json TEXT NOT NULL DEFAULT '[]'");
   if (!db.prepare('PRAGMA table_info(operations)').all().some(c => c.name === 'simulation_flow')) db.exec('ALTER TABLE operations ADD COLUMN simulation_flow INTEGER NOT NULL DEFAULT 0');

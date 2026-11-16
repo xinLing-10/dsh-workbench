@@ -408,7 +408,7 @@ test('artifacts are registered by the worker, read, confirmed and downloaded', a
 
     const list = await a.call('GET', `/api/v1/projects/${project.id}/artifacts`);
     assert.equal(list.payload.data.artifacts.length, 1);
-    assert.equal(list.payload.data.artifacts[0].name, '需求分析阶段.md');
+    assert.equal(list.payload.data.artifacts[0].name, '需求说明书.md');
     assert.equal(list.payload.data.artifacts[0].confirmed, false);
 
     const read = await a.call('GET', `/api/v1/projects/${project.id}/artifacts/${artifactId}`);

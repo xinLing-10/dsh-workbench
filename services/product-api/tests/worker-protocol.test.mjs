@@ -1,7 +1,7 @@
 import {signToken,bodyDigest} from '../../../packages/manager-contracts/tokens.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {createServer} from 'node:http';import {mkdtemp,mkdir,writeFile,readFile,rm} from 'node:fs/promises';import {join} from 'node:path';import {tmpdir} from 'node:os';import {randomBytes,createHash} from 'node:crypto';
-import {openDatabase} from '../src/db.mjs';import {createApp,appendEvent} from '../src/app.mjs';import {createTenant,createInvite} from '../src/auth.mjs';import {registerWorker} from '../src/workers.mjs';
+import {openDatabase} from '../src/db.mjs';import {createApp,appendEvent} from '../src/app.mjs';import {createTenant,createInvite} from '../src/auth.mjs';import {registerWorker,acquireLease} from '../src/workers.mjs';
 import {createWorkerCoordinator,executionFor,executionJob,executionClaims,acceptWorkerEvent} from '../src/worker-executions.mjs';import {createWorkerTransport} from '../src/worker-transport.mjs';
 import {createWorkerRunner} from '../../worker-bridge/lib/runner.mjs';import {createWorkerServer} from '../../worker-bridge/lib/server.mjs';import {createProductClient} from '../../worker-bridge/lib/client.mjs';
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
@@ -88,4 +88,13 @@ test('a Worker restart observes an unfinished journal as uncertain without recre
 test('queued cancellation removes the outbox without pretending an engine was stopped',async t=>{
  let calls=0;const f=await fixture(t,async()=>{calls++;return {status:'uncertain'};});await f.coordinator.tick();const id=await f.queue();
  const result=await f.api('POST',f.path+'/actions',{action:'cancel_operation',operationId:id,requestId:'stop-queued-001'});assert.equal(result.status,200);assert.equal(result.data.notDispatched,true);assert.equal(result.data.engineAcknowledged,false);await f.coordinator.tick();assert.equal(calls,0);assert.equal(executionFor(f.db,id),undefined);
+});
+
+test('a saved answer waits for the other active execution and resumes the same real Worker engine once',async t=>{
+ let calls=0;const f=await fixture(t,async({client})=>{calls++;const q=await client.createInteraction({kind:'question',prompt:'给谁用？'});const result=await client.waitAnswer(q.id,{pollMs:50,deadlineMs:4000});assert.equal(result.answer,'自己');return {status:'completed',reason:{kind:'completed'},text:'原任务恢复完成'};});
+ const id=await f.queue();await f.coordinator.tick();const q=await until(()=>f.db.prepare("SELECT * FROM interaction_requests WHERE operation_id=? AND state='pending'").get(id));
+ const tenant=createTenant(f.db),at=new Date().toISOString(),workerId='wrk_other_activity';registerWorker(f.db,{workerId,tenantId:tenant.id,secret:'x'.repeat(64)});f.db.prepare('INSERT INTO projects(id,tenant_id,name,workspace_key,created_at,updated_at) VALUES(?,?,?,?,?,?)').run('prj_other_activity',tenant.id,'虚构占用','other',at,at);f.db.prepare("INSERT INTO operations(id,tenant_id,project_id,type,request_id,payload_hash,state,created_at,updated_at) VALUES('op_other_activity',?,'prj_other_activity','send_message','other-slot','hash','running',?,?)").run(tenant.id,at,at);const lease=acquireLease(f.db,{workerId,projectId:'prj_other_activity',operationId:'op_other_activity',ttlMs:60000});
+ f.db.prepare("INSERT INTO worker_executions(operation_id,worker_id,tenant_id,project_id,lease_id,generation,engine_id,payload_hash,state,deadline,created_at,updated_at) VALUES('op_other_activity',?,?,'prj_other_activity',?,?,'eng_other_activity','hash','running',?,?,?)").run(workerId,tenant.id,lease.id,lease.generation,new Date(Date.now()+60000).toISOString(),at,at);
+ assert.equal((await f.api('POST',f.path+'/interactions/'+q.id+'/respond',{answer:'自己'})).status,200);assert.equal(executionFor(f.db,id).state,'waiting');assert.equal(f.db.prepare('SELECT state FROM interaction_requests WHERE id=?').get(q.id).state,'answered');assert.equal(calls,1);
+ f.db.prepare("UPDATE worker_executions SET state='completed' WHERE operation_id='op_other_activity'").run();f.db.prepare("UPDATE worker_leases SET state='revoked' WHERE id=?").run(lease.id);await until(()=>executionFor(f.db,id).state==='completed');assert.equal(calls,1);
 });

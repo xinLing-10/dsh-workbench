@@ -1,5 +1,6 @@
+import {claimController} from './src/controller-owner.mjs';
 import {createWorkerPool} from './src/worker-pool.mjs';
-import {setRunAuthorization} from './src/run-authorization.mjs';
+import {setRunAuthorization,setRunAuthorizationAmendment} from './src/run-authorization.mjs';
 import {createServiceBudget} from './src/service-budget.mjs';
 import {createModelGateway} from './src/model-gateway.mjs';
 import {readFile,stat} from 'node:fs/promises';
@@ -19,6 +20,7 @@ if(config.simulate && config.workerProtocol)throw Error('Choose simulation or Wo
 let coordinator=null;
 const bridge = config.workerProtocol ? {capabilities:()=>({...coordinator?.capabilities(),paused:config.modelCallsPaused||false}),cancel:body=>coordinator.cancel(body),recoverOperation:body=>coordinator.recoverOperation(body),workerCapabilities:id=>coordinator?.workerCapabilities?coordinator.workerCapabilities(id):coordinator?.capabilities()||{}} : createBridge({ config });
 if(process.env.PRODUCT_API_ACCEPTANCE_AUTHORIZATION_FILE){const file=process.env.PRODUCT_API_ACCEPTANCE_AUTHORIZATION_FILE;if((await stat(file)).mode&0o077)throw Error('Acceptance authorization file must be private');setRunAuthorization(db,JSON.parse(await readFile(file,'utf8')));}
+if(process.env.PRODUCT_API_AUTHORIZATION_AMENDMENT_FILE){const file=process.env.PRODUCT_API_AUTHORIZATION_AMENDMENT_FILE;const meta=await stat(file);if(!meta.isFile()||(meta.mode&0o077))throw Error('Budget amendment file must be private');setRunAuthorizationAmendment(db,JSON.parse(await readFile(file,'utf8')));}
 const serviceBudget=createServiceBudget({db});
 let modelGateway=null;
 if(config.formalService && (!config.workerProtocol || config.simulate))throw Error('Formal service requires Worker protocol');
@@ -30,7 +32,9 @@ if(config.formalService && !config.modelCallsPaused){
  modelGateway=createModelGateway({budget:serviceBudget,model,attribution:process.env.PRODUCT_API_MODEL_USER_AGENT?{'user-agent':process.env.PRODUCT_API_MODEL_USER_AGENT}:{},resolveToken:async()=>{if((await stat(file)).mode&0o077)throw Error('Credential file permission changed');return (await readFile(file,'utf8')).trim();}});
  serviceBudget.expireHolds();
 }
+const owner=config.workerProtocol&&!process.argv.includes('--invite')&&!process.argv.includes('--check-invite')?claimController(db):null;
 const app = createApp({ db, config, bridge, modelGateway });
+if(config.workerProtocol&&config.workspaceRoot)await app.managerCore.restore();
 
 // `node server.mjs --check-invite <token>` verifies a token against this database.
 if (process.argv.includes('--check-invite')) {
@@ -81,7 +85,7 @@ const dispatcher = config.simulate ? createDispatcher({ db, enabled: true, inter
 const interval = dispatcher ? setInterval(() => {
   if (stopped || dispatching) return;
   dispatching = true;
-  pendingTick = dispatcher.tick().catch(() => console.error('[product-api] dispatch failed; check persisted operation state')).finally(() => { dispatching = false; });
+  pendingTick = Promise.resolve().then(()=>{owner?.assert();return app.managerCore.tick();}).then(()=>dispatcher.tick()).catch(() => console.error('[product-api] dispatch failed; check persisted operation state')).finally(() => { dispatching = false; });
 }, 1000) : null;
 interval?.unref();
 
@@ -97,6 +101,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
     server.close(async () => {
       await pendingTick;
       app.managerCore.dispose();
+      owner?.release();
       db.close();
       process.exit(0);
     });

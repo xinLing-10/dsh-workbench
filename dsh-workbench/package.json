@@ -45,7 +45,8 @@
     "scripts/evaluate-teaching.mjs",
     "docs/teaching-eval-cases.json",
     "core/",
-    "scripts/check-manager-core.mjs"
+    "scripts/check-manager-core.mjs",
+    "document-writer.js"
   ],
   "dsh": {
     "bundle": {

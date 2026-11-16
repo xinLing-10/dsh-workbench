@@ -76,3 +76,11 @@ python3 deploy/service/test_release.py
 本轮 ECS 已安装独立私有实例，真实模型测试已结束，临时模型令牌已删除，模型准入暂停。24 小时观察从北京时间 2026-11-14 17:27 开始，尚未通过；域名 HTTPS 未备好，邀请不开放。实际服务、端口、预算和恢复范围见 [验收记录](acceptance-status.md)。
 
 `bootstrap.mjs` 仅用于全新验收数据库和虚构账户，不适用于覆盖现有服务。`verify.mjs` 的真实模型阶段会产生费用，必须先有独立授权与固定请求编号，不得因脚本失败重置账本重跑。控制代理只用于本验收实例故障演练，不能对公网暴露。Worker 控制器需要可信 Docker 访问权，工具容器不接收该权限。
+
+## 最新定向试用实例
+
+源码1ee6964已独立部署，实际状态见 [定向试用部署记录](trial-status.md)，服务器模型授权文件的配置、轮换和撤销见 [凭据方案](model-credentials.md)。它不覆盖原验收实例；本文上方“本轮部署与验收边界”为原验收阶段记录。
+
+## Next.js页面发布
+
+正式试用已切换独立Next页面，API/Worker仍为原服务。配置为 manager-trial-next.service 与 manager-trial-next.conf，实际部署、源码/运行包摘要、只读核对、灰度选择和回退见 [Next发布记录](next-rollout-status.md)。新服务只绑定回环8120，不在ECS上运行构建。构建时固定 MANAGER_API_ORIGIN=http://127.0.0.1:8110；开发默认8106不可当作生产API。

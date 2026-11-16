@@ -1,0 +1,23 @@
+[Unit]
+Description=Manager trial Next.js frontend
+After=network-online.target manager-trial-api.service
+[Service]
+User=manager-trial
+Group=manager-trial
+WorkingDirectory=/srv/manager-trial/next-current
+Environment=NODE_ENV=production
+Environment=HOSTNAME=127.0.0.1
+Environment=PORT=8120
+ExecStart=/srv/manager-trial/runtime/node server.js
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=64
+[Install]
+WantedBy=multi-user.target

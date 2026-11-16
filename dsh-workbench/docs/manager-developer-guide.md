@@ -61,6 +61,8 @@ Docker 边界用例需可用 Docker 与已有的固定镜像，按测试要求�
 
 ## 3. 部署、凭据与恢复
 
+最新服务器定向试用状态见 [独立试用部署记录](../../deploy/service/trial-status.md)；当前账户授权文件格式、隐藏输入、权限、原子轮换和撤销见 [服务器模型凭据配置方案](../../deploy/service/model-credentials.md)。当前认证为 DSH 账户授权，不能直接当作通用API Key适配。
+
 独立产品使用 [独立服务部署工具](../../deploy/service/README.md)；原 DSH 插件使用 [插件 ECS 部署指南](../../deploy/README.md)。两套归档和入口不同。实际新服务只监听服务器回环地址，localhost 页面可能是本地实例，不能仅凭浏览器地址判定服务器已公开上线。
 
 模型秘密仅由服务端网关读取，不能交给客户浏览器、Worker 工具容器或写进 Git。`PRODUCT_API_MODEL_CALLS_PAUSED=1` 允许删除临时模型授权后保持查询和观察；恢复正式付费服务需另行配置凭据及额度。
@@ -221,3 +223,74 @@ node services/product-api/probes/verify-admin-invitations.mjs --fixture
 本轮使用真实 DeepSeek 4 次、9,153 token，工具审批均为拒绝，没有自动批准工具；取得了真实原生停止回执。旧预占17,432未释放。尚未验证任意代码修改、允许工具后的真实写入或模型生成中停止，不能将此示例当作全部产品验收。管理员方案、预算与边界见[统一 Worker 协议与验证](unified-worker-protocol.md)。
 
 管理员说明：本轮将任务、正式文档、知识和陪学的规则提取为[共享管家业务内核](shared-manager-core.md)，插件与独立产品 API 使用同一份实现。**已核对，用户操作不变**，现有截图仍适用。独立网页尚未新增完整陪学操作页面，也不会因本次内部重构自动开启任务执行；管理员仍需接通运行服务。共享数据只允许一个运行进程写入，切换入口前先停止旧进程并备份，不要同时用两个实例修改同一项目。
+
+## 2026-11-14 独立前端试用体验修复
+
+项目表单以 `POST /api/v1/projects` 保存名称和可选 `notes`，schema10兼容迁移旧项目；新增 `project_sources` 保存用户确认上传的UTF-8文字副本。`GET/POST/DELETE /api/v1/projects/:id/sources` 均先校验租户，写入要求CSRF；单文件32KB、每项目50份/512KB，路径、类型、依赖目录与常见密钥检查在服务器再次执行。资料只保存在控制库，不按浏览器路径访问宿主机，也不会执行上传代码。备份必须包含SQLite，移除不清理不可变历史快照。
+
+发送时将备注和受限资料摘录冻结到message_created事件，客户消息文本与原幂等摘要保持不变；有资料的Worker任务针对完整输入重新计算协议摘要，最多12000字符并进一步受UTF-8传输字节限制。更改资料后重试同一消息仍重放原任务，不悄悄更换原任务上下文。原任务协议保持兼容；Worker独立包通过contracts:sync携带共享成果命名函数。
+
+`/help`提供唯一客户手册离线HTML；不包含客户数据或凭据，使用无脚本、仅内嵌样式/图片的专用CSP。手册更新后重新生成离线版并纳入部署。成果API根据内容标题派生显示及下载名，兼容旧hash路径，不重写原字节或确认状态。
+
+发送与历史加载分开锁定；停止后的发送序号使旧回执不能清空新输入或重新锁定发送。浏览器夹具 `customer-feedback-preview.mjs --fixture`（8104）与 `verify-customer-feedback.mjs --fixture` 使用虚构项目，后者真实选择文件夹并注入刷新挂起，不调用模型、不批准工具。新增API用例在 `customer-feedback.test.mjs`。
+
+`PRODUCT_API_NEW_PROJECT_TOKEN_LIMIT` 默认0，不自动配置项目策略；由运维显式配置正整数后，正式服务仅为已有用户策略的新项目配置三者最小值（配置值、用户上限、全局上限）的累计策略，保留审计，全局及不可变授权不变。未配置用户/全局额度或无平台管理员时不自动授额。当前定向试用设置500万，三人仍共享原500万/1000次硬上限。
+
+## 追加硬预算（schema11）
+
+用户明确提升试用总额至5000万token并新增两位受邀者；个人/项目原500万、1000次请求保护保留。`setRunAuthorizationAmendment`仅供受信任运维，追加不可UPDATE/DELETE的授权链，不修改base授权、不删调用或未知预占。每条引用当前有效授权/修订ID，额度严格增加，其他硬限制不得降低；重复同ID同内容幂等，改写或旧链引用拒绝。`runAuthorization`计算有效上限；全局管理策略与该硬上限取小值。
+
+启动可读私有0600的 `PRODUCT_API_AUTHORIZATION_AMENDMENT_FILE`，先载入原授权，再追加/核对修订。文件不含模型秘密；原模型文件和账本不变。`maxRequests`继续统计原调用总数，不因扩容或项目/用户变化清零。本轮私有授权文件只授权指定五位试用者，不代表开放公众注册。
+
+#### 队列阻塞故障修复准备（2026-11-14）
+
+Worker 池目前对配置成员的所有非终态执行实施全局串行保护；缺少终态回执的 uncertain 会阻塞其他租户。原任务不自动重发。`isolated-runtime.mjs` 新增严格区分：仅 `needs_review && complete === true`（网关已结算的完整但不可用响应）返回真实失败；unknown 或 incomplete 保留 uncertain。截断工具 JSON 不解析、不执行。网关用量证据追加 stopReason、complete、toolBlocks 元数据，便于后续诊断，不记录消息正文。旧证据不补造停止原因。
+
+隔离替换 Worker 的运维条件、数据保留及预算冻结限制见管理员手册；不能简单从池 SQL 过滤所有 uncertain，否则可能允许仍活跃的未知执行并发。本次修复已热更新至独立试用实例，恢复前后账本校验及 4 条真实队列完成证据见 [试用记录](../../deploy/service/trial-status.md)。旧异常记录保留，未实现自动隔离或重放。
+
+## Next.js 前端迁移第一批（2026-11-15）
+
+实现目录为 [apps/manager-next](../../apps/manager-next/README.md)。Next.js 16.4.6、React/React DOM 19.3.1、TypeScript 5.9.3，精确解析以 package-lock.json 为准。保留原原生网页并行维护，线上 Nginx、API、Worker、凭据和预算未修改。
+
+App Router 提供登录、项目列表、项目对话和管理员路由；共享 WorkspaceProvider 保留 CSRF、项目草稿、问答草稿与发送幂等记录。组件拆分为对话、原生 dialog、资料上传、问答许可、成果版本和管理控制台。API 客户端不自动重试写操作，超时覆盖响应体读取；旧响应不能覆盖停止后的新草稿。React 按文字渲染 Markdown 子集，不执行模型 HTML 或链接。
+
+浏览器仍连接原 Product API 和项目 SSE 协议；没有把任务调度或模型调用放入 Next 请求生命周期。开发/预览使用固定服务端 API 目标的 rewrites，同源保留 Cookie、Origin 与 CSRF。实测默认 Next 压缩会缓冲 SSE，已设置 compress:false；生产建议将 /api/v1 和事件接口经 Nginx 直接转发原 API，关闭该路径缓冲，只对普通静态资源按需压缩。不能将前端页面流式渲染等同于模型逐字输出。
+
+构建使用 standalone，打包脚本补齐 .next/static 与可选 public；npm start 启动 standalone server 并固定监听127.0.0.1，PORT 可指定。API 目标由构建时配置固定，换环境需要重新构建并核对目标；不得把模型令牌放入 NEXT_PUBLIC 变量。构建应在开发/构建环境完成，小规格 ECS 仅运行产物。
+
+本地虚构 API 8106、Next 3100。运行、检查、浏览器探针及回退步骤见应用 README。真实浏览器探针只针对这个临时服务，连接中断入口仅存在于显式 --fixture 的探针服务器，不存在于正式 API。截图和模拟许可/交付不能当作真实模型验收。
+
+后续增量流与服务器灰度切换状态见 [迁移续接记录](next-migration-progress.md)。旧网页回退不回滚 SQLite、不清空用量和未知预占、不重放任务。每批同步客户与管理员手册、离线 HTML 及受影响截图。
+
+## Next 增量流与灰度发布（2026-11-15）
+
+模型仍由 Product API 的 budgeted-model 单次请求，凭据不会进入 Next/浏览器/Worker。网关逐帧解析 Anthropic SSE，跨 UTF-8 数据包及 CRLF 安全累积，只发布 text_delta，不发布思考或工具 JSON。每200ms保存一次有界全文 message_stream 快照，首块和结束立即刷新。Worker继续收到原完整 wire/record；工具许可、用量结算和最终结束回执协议不变。
+
+项目SSE使用数据库全局事件ID，原生EventSource使用Last-Event-ID回放，快照为替换语义，重复不会追加重复文字。Next直接应用快照而非每个token拉取全部资料；打开项目通过 messages?includePreview=1 获取当前快照。message_completed替换过程内容，未知/停止/失败保留未完成标记；旧网页不请求预览参数，原接口结果保持兼容。重连不重派发、不修改预占；流中途缺用量仍冻结，不自动重试。
+
+新单位 manager-trial-next.service 仅监听127.0.0.1:8120（256MiB/50% CPU）；API8110与Worker不放入Next生命周期。生产Nginx直接代理/api/v1、/help、/healthz到API，SSE关闭缓冲/压缩；页面代理Next。/_manager/next为浏览器选择新版，/_manager/legacy选择旧版，选择Cookie只影响页面，不是认证或权限。Next没有模型密钥。配置见 deploy/service/manager-trial-next.{service,conf}。
+
+本轮页面不使用next/image，配置images.unoptimized=true；本机standalone发布包排除Darwin原生图片库，仅部署已验证Linux可启动的JS页面运行时。若未来启用图片优化或其他本地原生模块，必须在Linux构建/安装目标平台依赖，不可直接复用本轮方法。
+
+参考：[Next自托管与流式代理](https://nextjs.org/docs/app/guides/self-hosting)、[DeepSeek Anthropic兼容流](https://api-docs.deepseek.com/guides/anthropic_api/)。实时预览不代表业务完成；本轮不改变独立24小时验收实例，不将其空闲观察作为生产负载证明。
+
+## 当前架构与私有观察收尾
+
+最新结构、消息时序、数据权威记录和共享内核接通边界见[当前架构分析](manager-architecture-current.md)。私有空闲观察已以1464样本/24.6488小时通过，详见[最终脱敏报告](../../deploy/service/acceptance-final-report.json)；timer和聊天自动化已停止、临时SSH已撤销并验证拒绝登录，模型保持暂停。不得将该结论扩写为真实业务负载或活动Worker崩溃恢复已通过。公网试用的服务与凭据独立保留。
+
+## 业务闭环本地批次
+
+实现范围、剩余边界与高可用前置方案见 [业务闭环进度](business-loop-progress.md)。SQL schema升至12；启动时为旧消息补一次任务关系，不重写旧事件、账本和原请求摘要。新增字段参与新请求幂等校验，Worker继续使用有范围约束的内容摘要。新增任务状态是查询视图，不另存一份可漂移的状态。
+
+普通聊天/学习入口仍是POST messages，支持mode、taskId及learning动作。学习目录和成果关联随项目详情返回；课程进度通过POST /projects/:id/tasks/:taskId/progress写入，要求CSRF、项目归属、学习任务归属与revision。Word下载为现有download接口的format=docx派生格式，只读源版本，不新增确认或模型请求。
+
+资源调度仍为单控制进程；人工等待占原Worker但可让出全局活动槽。恢复答案和最终派发分别检查全局资源，未知状态不自动释放。新服务不能多API复制后直接上线；第五步尚为方案，未实现分布式锁、共享消息总线或数据库迁移。
+
+手册新增四张本地真实夹具截图，客户/管理员离线版同步生成；原插件203项回归通过。最终验证摘要见 [本批验证记录](business-loop-verification.json)。
+
+
+## 本地后续实现：完整业务闭环适配
+
+最新本地版本升至 schema 13，接通共享内核 → SQL 业务任务 → 原 Worker 协议 → 回执 → 文档与知识 → 审阅/模板/陪学的链路。旧学习计划在启用深度流程时承接，旧修改入口随后拒绝写入，避免计划分叉。正式控制进程有同主机单写所有权保护；SSE 支持从数据库补拉其他连接提交的事件。它们不能替代共享数据库、对象存储和多机调度。
+
+实现、接口和本地验证详见[业务闭环补齐说明](business-loop-completion.md)。本批没有真实模型调用、远程部署、Git 推送或凭据操作。此前 schema 12 及未贯通列表属于上一批范围，以新专题为准。

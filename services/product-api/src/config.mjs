@@ -5,6 +5,7 @@ export function loadConfig(env = process.env) {
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
   };
   return {
+    newProjectTokenLimit: number(env.PRODUCT_API_NEW_PROJECT_TOKEN_LIMIT, 0),
     modelCallsPaused: env.PRODUCT_API_MODEL_CALLS_PAUSED === '1',
     formalService: env.PRODUCT_API_FORMAL_SERVICE === '1',
     workerProtocol: env.PRODUCT_API_WORKER_PROTOCOL === '1',

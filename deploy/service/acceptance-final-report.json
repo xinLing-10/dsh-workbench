@@ -1,0 +1,40 @@
+{
+  "scope": "private idle acceptance instance only",
+  "report": {
+    "status": "passed",
+    "samples": 1464,
+    "required": 1441,
+    "elapsedHours": 24.648757777777778,
+    "failures": 0,
+    "gaps": 0,
+    "restarts": 0,
+    "unexpectedRequests": 0,
+    "first": "2026-11-14T09:27:39.893Z",
+    "last": "2026-11-15T10:06:35.421Z"
+  },
+  "model": {
+    "requests": 6,
+    "used": 3636,
+    "held": 0,
+    "unknown": 0
+  },
+  "modelPaused": true,
+  "temporaryModelCredentialRemoved": true,
+  "samplesSha256": "289131a38b6363c411de2cb979a32d5e09ed1bc3b86c23c3a3fe826ef15fb702",
+  "observerTimerStopped": true,
+  "limitations": [
+    "No real business load acceptance",
+    "No active Worker crash recovery acceptance",
+    "No model generation disconnect acceptance",
+    "No host reboot acceptance"
+  ],
+  "separatePublicTrialUntouched": true,
+  "cleanup": {
+    "removedAcceptanceKeyLines": 1,
+    "otherAuthorizationsPreserved": true,
+    "newSshAuthenticationRejected": true,
+    "temporaryPrivateKeyDeleted": true,
+    "automationDeleted": true
+  },
+  "finalizedAt": "2026-11-15T12:00:26.664Z"
+}

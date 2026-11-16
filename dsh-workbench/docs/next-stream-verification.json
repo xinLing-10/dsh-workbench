@@ -1,0 +1,137 @@
+{
+  "at": "2026-11-15T08:58:39.453Z",
+  "backend": {
+    "tests": 168,
+    "passed": 166,
+    "skipped": 2,
+    "failed": 0
+  },
+  "nextClient": {
+    "tests": 4,
+    "passed": 4
+  },
+  "localUi": {
+    "fixture": true,
+    "modelCalls": 0,
+    "checks": 28,
+    "passed": [
+      "App Router login preserves cookie session",
+      "SSE and fixture history are connected",
+      "light theme follows system preference",
+      "mobile conversation fits viewport",
+      "SSE reconnect never resends a message",
+      "question drafts survive navigation and old SSE closes",
+      "historical versions cannot be confirmed",
+      "disabled feature explains its condition",
+      "download endpoint preserves meaningful filename",
+      "new-project dialog focuses a form field",
+      "project notes persist through existing API",
+      "folder preview skips hidden secret files",
+      "upload requires explicit consent",
+      "sources modal fits mobile",
+      "learning only prepares editable draft",
+      "failed send keeps draft without automatic retry",
+      "explicit same-draft retry reuses request ID",
+      "idempotent replay does not duplicate user message",
+      "simulation permission-question-delivery chain completes",
+      "stop preserves next draft and unlocks composer",
+      "leaving project closes realtime subscription",
+      "admin page has five working sections",
+      "queue is rendered by project name",
+      "issued invite stays only in current result",
+      "switching section clears invite plaintext",
+      "customer help is same-origin offline manual",
+      "ordinary user admin API remains denied",
+      "other tenant project remains invisible"
+    ],
+    "screenshots": 9,
+    "consoleErrors": []
+  },
+  "streamUi": {
+    "fixture": true,
+    "modelCalls": 0,
+    "checks": 4,
+    "passed": [
+      "App Router login preserves cookie session",
+      "incremental preview appears before terminal receipt",
+      "reconnect restores latest durable preview without sending",
+      "final reply replaces transient preview exactly once"
+    ],
+    "screenshots": 1,
+    "consoleErrors": []
+  },
+  "publicCanary": {
+    "publicUi": true,
+    "modelCalls": 0,
+    "checks": 6,
+    "passed": [
+      "public HTTPS login uses original API cookie",
+      "disposable tenant is isolated",
+      "project and live SSE work on public proxy",
+      "ordinary customer cannot open admin API",
+      "updated customer guide is available",
+      "browser never sent a model task"
+    ],
+    "consoleErrors": []
+  },
+  "publicDefault": {
+    "publicUi": true,
+    "modelCalls": 0,
+    "checks": 6,
+    "passed": [
+      "public HTTPS login uses original API cookie",
+      "disposable tenant is isolated",
+      "project and live SSE work on public proxy",
+      "ordinary customer cannot open admin API",
+      "updated customer guide is available",
+      "browser never sent a model task"
+    ],
+    "consoleErrors": []
+  },
+  "realModel": {
+    "authorization": {
+      "tokenLimit": 10000,
+      "maxRequests": 2,
+      "carryoverCommitted": 44892,
+      "aggregateLimit": 200000
+    },
+    "toolsExecuted": 0,
+    "source": "real-provider",
+    "textOnly": true,
+    "passed": true,
+    "previews": 5,
+    "completedEvents": 1,
+    "firstPreviewMs": 1121,
+    "finalMs": 2001,
+    "artifact": {
+      "bytes": 429,
+      "sha256": "963dd438ebbc9c9cb168c989108bbcd927d15f5c8bfcdd3ebfe1ebcdf1b02a90"
+    },
+    "orderedEventIds": true,
+    "requests": 1,
+    "used": 157,
+    "held": 0,
+    "unknown": 0,
+    "at": "2026-11-15T08:38:18.177Z"
+  },
+  "testAccount": {
+    "disabled": true,
+    "activeSessions": 0,
+    "modelLimit": 0
+  },
+  "deployment": {
+    "entry": "https://8.153.164.227/",
+    "default": "Next.js",
+    "legacyChoice": "/_manager/legacy",
+    "switchedAt": "2026-11-15T08:50:25.876468Z",
+    "apiLedgerUnchanged": true,
+    "nextArchive": "193bc6acefeea2477456afa8943b6e28eed8d99e93cf29133c1e9de831150462",
+    "apiPatch": "38bbc4af7a40504b5d3fc6ff288308ebbcfdf5f7f24e967df5d98a9b266d0f14"
+  },
+  "limits": [
+    "Real model smoke used a text-only Worker executor without model tools.",
+    "No load, active crash, model generation disconnect or host reboot acceptance claimed.",
+    "Independent private 24h observation remains separate."
+  ],
+  "aggregateTestCommitment": 45049
+}

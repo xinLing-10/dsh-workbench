@@ -8,6 +8,7 @@ import * as plans from './learning-plan.js';
 import * as coaching from './learning-coach.js';
 import * as memory from './learning-memory.js';
 import * as schedules from './learning-review.js';
+export {buildDocx,zipStored} from './document-writer.js';
 export { createManagerService } from './manager.js';
 export { createProjectState, boardSummary } from './project-state.js';
 export { documents, reviews, knowledge, learning, plans, coaching, memory, schedules };

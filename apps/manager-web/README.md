@@ -1,4 +1,6 @@
-# manager-web（独立产品前端，第一片）
+# manager-web（保留的原生独立前端）
+
+Next.js 新版位于 [apps/manager-next](../manager-next/README.md)，已完成本地第一批迁移验证；本目录仍作为当前线上页面和回退版本保留。下文初期阶段描述以最新开发者手册和试用记录为准。
 
 状态：**最小可用，无构建步骤**。设计建议 React + TypeScript + Vite；本仓库离线、无法安装前端工具链，因此先用原生 ES module 实现，保证能直接跑通"登录 → 项目 → 对话 → 回答 → 查看"。
 

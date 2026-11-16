@@ -1,0 +1,68 @@
+{
+  "scope": "local business-loop increment; not deployed",
+  "serverOperations": false,
+  "realModelCalls": 0,
+  "gitPush": false,
+  "tests": {
+    "apiWorkerContracts": {
+      "total": 187,
+      "passed": 185,
+      "failed": 0,
+      "skipped": 2
+    },
+    "plugin": {
+      "total": 203,
+      "passed": 203,
+      "failed": 0
+    },
+    "nextClient": {
+      "total": 5,
+      "passed": 5,
+      "failed": 0
+    }
+  },
+  "screenshots": [
+    {
+      "path": "business-loop-tasks-desktop.png",
+      "sha256": "773cc057b83a2424080f40ccf38b273f39363c0ff9ad366f14bffc0878b29403",
+      "fixture": true
+    },
+    {
+      "path": "business-loop-learning-desktop.png",
+      "sha256": "a507d61a61c2fd73d8363e859a11f03e9a5b38d18fd08a7ff85cc9fceee83944",
+      "fixture": true
+    },
+    {
+      "path": "business-loop-delivery-desktop.png",
+      "sha256": "da282a272e7d2572cf793bf128c046d680a394752d154ac9ae7b535bdf06a61f",
+      "fixture": true
+    },
+    {
+      "path": "business-loop-tasks-mobile.png",
+      "sha256": "8328f173e9eaf1b926471212afd61a87a275fa2df86f369fa82592ce89bf8bc9",
+      "fixture": true
+    }
+  ],
+  "browserChecks": [
+    "task and learning panel opens",
+    "read progress persists",
+    "self-assessment prerequisite yields a toast",
+    "lesson selection keeps task identity and prepares editable draft without sending",
+    "artifact task provenance and Word export link visible",
+    "Word downloaded through actual browser; ZIP CRC and Chinese OOXML verified",
+    "390px document width is exactly 390px"
+  ],
+  "guides": {
+    "customerEmbeddedImages": 42,
+    "customerSections": 17,
+    "adminEmbeddedImages": 10,
+    "adminSections": 12
+  },
+  "remaining": [
+    "full plugin five-stage execution mapping and managerRuntime adapter",
+    "knowledge automatic writeback and full delivery formats",
+    "semantic long-term memory and full repository retrieval",
+    "multi-API coordination, shared database/event infrastructure and high availability",
+    "real model and server regression before rollout"
+  ]
+}

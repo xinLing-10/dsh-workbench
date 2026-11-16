@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 export const OFFICIAL_MESSAGES='https://api.deepseek.com/anthropic/v1/messages';
 /** One HTTP attempt; journal committed before credential resolution or dispatch. */
-export async function budgetedMessage({budget,id=randomUUID(),body,resolveToken,attribution={},fetchImpl=globalThis.fetch,toolNames=[],signal,authorizeDispatch=()=>{}}){
+export async function budgetedMessage({budget,id=randomUUID(),body,resolveToken,attribution={},fetchImpl=globalThis.fetch,toolNames=[],signal,authorizeDispatch=()=>{},onText=()=>{}}){
  const reservation=budget.reserve(id,body,{toolNames});const record={id,transport:fetchImpl===globalThis.fetch?'provider-http':'injected-test',model:body.model,status:'unknown',usage:null,text:'',toolBlocks:0,toolCalls:[],complete:false,reservation:reservation.amount};
  let wire='';
  try{
@@ -16,20 +16,26 @@ export async function budgetedMessage({budget,id=randomUUID(),body,resolveToken,
    throw Error('Upstream HTTP failure');
   }
   if(!response.body)throw Error('Missing upstream body');
-  const reader=response.body.getReader(),decoder=new TextDecoder();let bytes=0;
-  try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>2000000)throw Error('Response too large');wire+=decoder.decode(value,{stream:true});}wire+=decoder.decode();}finally{await reader.cancel().catch(()=>{});}
-  for(const frame of wire.replace(/\r\n/g,'\n').split('\n\n')){
-   const data=frame.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');if(!data||data==='[DONE]')continue;const e=JSON.parse(data);
-   if(e.type==='error')throw Error('Stream error');
+  const reader=response.body.getReader(),decoder=new TextDecoder();let bytes=0,pending='';
+  const frame = raw => {
+   const data=raw.replace(/\r\n/g,'\n').split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');if(!data||data==='[DONE]')return;
+   const e=JSON.parse(data);if(e.type==='error')throw Error('Stream error');
    if(e.type==='message_start'){record.modelReturned=e.message?.model;record.messageId=e.message?.id;record.usage={...e.message?.usage};}
    if(e.type==='content_block_start'&&e.content_block?.type==='tool_use'){record.toolBlocks++;record.toolCalls.push({id:e.content_block.id,name:e.content_block.name});}
-   if(e.type==='content_block_start'&&e.content_block?.type==='text')record.text+=e.content_block.text||'';
-   if(e.type==='content_block_delta'&&e.delta?.type==='text_delta')record.text+=e.delta.text||'';
+   let text='';if(e.type==='content_block_start'&&e.content_block?.type==='text')text=e.content_block.text||'';
+   if(e.type==='content_block_delta'&&e.delta?.type==='text_delta')text=e.delta.text||'';
+   if(typeof text!=='string')throw Error('Invalid text delta');
+   if(text){record.text+=text;try{onText(text);}catch{record.previewUnavailable=true;}}
    if(e.type==='message_delta'){record.usage={...record.usage,...e.usage};record.stopReason=e.delta?.stop_reason;}
    if(e.type==='message_stop')record.complete=true;
-  }
-  const settled=budget.settle(id,{usage:record.usage,complete:record.complete,outputLimit:body.max_tokens,evidence:{requestId:record.requestId,messageId:record.messageId,modelReturned:record.modelReturned}});
+  };
+  const consume = chunk => {
+   wire+=chunk;pending+=chunk;
+   for(;;){const match=/\r?\n\r?\n/.exec(pending);if(!match)break;frame(pending.slice(0,match.index));pending=pending.slice(match.index+match[0].length);}
+  };
+  try{for(;;){const {done,value}=await reader.read();if(done)break;bytes+=value.length;if(bytes>2000000)throw Error('Response too large');consume(decoder.decode(value,{stream:true}));}consume(decoder.decode());if(pending.trim())throw Error('Incomplete SSE frame');}finally{await reader.cancel().catch(()=>{});}
+  const settled=budget.settle(id,{usage:record.usage,complete:record.complete,outputLimit:body.max_tokens,evidence:{requestId:record.requestId,messageId:record.messageId,modelReturned:record.modelReturned,stopReason:record.stopReason,complete:record.complete,toolBlocks:record.toolBlocks}});
   record.status=!settled?'unknown':record.toolBlocks===0&&record.stopReason==='end_turn'?'completed':record.toolBlocks>0&&record.stopReason==='tool_use'&&record.toolCalls.every(t=>toolNames.includes(t.name))?'tool_requested':'needs_review';
- }catch(error){record.errorKind=error.name;budget.settle(id,{usage:record.usage,complete:false,outputLimit:body.max_tokens,evidence:{errorKind:error.name,httpStatus:record.httpStatus,requestId:record.requestId,messageId:record.messageId,modelReturned:record.modelReturned}});}
+ }catch(error){record.errorKind=error.name;budget.settle(id,{usage:record.usage,complete:false,outputLimit:body.max_tokens,evidence:{errorKind:error.name,httpStatus:record.httpStatus,requestId:record.requestId,messageId:record.messageId,modelReturned:record.modelReturned,stopReason:record.stopReason,complete:record.complete,toolBlocks:record.toolBlocks}});}
  return {record,wire};
 }

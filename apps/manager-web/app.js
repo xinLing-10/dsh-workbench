@@ -26,6 +26,9 @@ const state = {
   events: null,
   refreshTimer: null,
   busy: false,
+  pendingSend: new Map(),
+  sending: false,
+  sourceCandidates: [],
 };
 
 const $ = (id) => document.getElementById(id);
@@ -39,17 +42,37 @@ function on(id, event, handler) {
 
 /** @returns the JSON payload, throwing a stable error with the API code. */
 async function api(method, path, body) {
-  const response = await fetch(path, {
-    method,
-    credentials: 'same-origin',
-    headers: {
-      ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-      ...(method === 'GET' ? {} : { 'x-csrf-token': state.csrf }),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : {};
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  let response, text;
+  try {
+    response = await fetch(path, {
+      method,
+      credentials: 'same-origin',
+      signal: controller.signal,
+      headers: {
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...(method === 'GET' ? {} : { 'x-csrf-token': state.csrf }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    text = await response.text();
+  } catch {
+    const error = new Error(method === 'GET'
+      ? '连接暂时中断，未能刷新最新状态。请检查网络后重新打开项目。'
+      : '尚未收到服务器回执，操作可能已经送达。请先重新打开项目核对记录，不要连续重复提交。');
+    error.code = 'network_uncertain';
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+  let payload;
+  try { payload = text ? JSON.parse(text) : {}; }
+  catch {
+    const error = new Error(`服务器返回异常（${response.status}）。请先核对项目记录，不要重复提交；仍有问题请联系管理员。`);
+    error.code = 'response_uncertain';error.status = response.status;
+    throw error;
+  }
   if (!response.ok) {
     const error = new Error(payload?.error?.message || `请求失败（${response.status}）`);
     error.code = payload?.error?.code || 'unavailable';
@@ -59,15 +82,15 @@ async function api(method, path, body) {
   return payload;
 }
 
+function syncComposer() {
+  if ($('send')) $('send').disabled = state.sending || !$('message-text')?.value.trim();
+}
 function setBusy(value) {
   state.busy = value;
-  for (const button of document.querySelectorAll('button')) button.disabled = value;
-  if (!value) {
-    const send = $('send');
-    if (send) send.disabled = $('message-text')?.value.trim() === '';
-    const confirm = $('confirm-artifact');
-    if (confirm) confirm.disabled = !state.currentArtifact || state.currentArtifact.confirmed || state.currentVersionId !== state.latestVersionId;
-  }
+  // Loading history must never lock the stop button or the message composer.
+  for (const id of ['submit-login','create-project-submit']) if($(id)) $(id).disabled=value;
+  syncComposer();
+  if($('confirm-artifact')) $('confirm-artifact').disabled = value || !state.currentArtifact || state.currentArtifact.confirmed || state.currentVersionId !== state.latestVersionId;
 }
 
 function show(name) {
@@ -103,6 +126,7 @@ async function loadProjects() {
     const item = document.createElement('li');
     const label = document.createElement('span');
     label.textContent = project.name;
+    if(project.notes){const note=document.createElement("small");note.className="project-note";note.textContent=project.notes;label.append(note);}
     const open = document.createElement('button');
     open.textContent = '打开';
     open.addEventListener('click', () => openProject(project.id).catch((error) => fail(error.message)));
@@ -165,6 +189,7 @@ async function openProject(id) {
     show('project');
     requestAnimationFrame(goToLatest);
     connectEvents(id);
+    await loadSourceSummary(id);
   } finally {
     setBusy(false);
   }
@@ -448,29 +473,90 @@ async function respond(id, answer) {
 
 async function sendMessage() {
   const text = $('message-text').value.trim();
-  if (!text) return;
-  setBusy(true);
+  if (!text || state.sending || !state.project) return;
+  const projectId = state.project.id;
+  // A lost response must not turn the same draft into a second paid task.
+  let attempt = state.pendingSend.get(projectId);
+  if (!attempt || attempt.text !== text) {
+    attempt = { text, requestId: crypto.randomUUID() };
+    state.pendingSend.set(projectId, attempt);
+  }
+  const sendSequence=(state.sendSequence||0)+1;state.sendSequence=sendSequence;
+  state.sending=true;syncComposer();
   try {
-    await api('POST', `/api/v1/projects/${state.project.id}/messages`, { text, requestId: crypto.randomUUID() });
+    await api('POST', `/api/v1/projects/${projectId}/messages`, attempt);
+    if(state.pendingSend.get(projectId)===attempt)state.pendingSend.delete(projectId);
+    if(state.sendSequence!==sendSequence||state.project?.id!==projectId)return;
     $('message-text').value = '';
     $('send').disabled = true;
-    await openProject(state.project.id);
+    try { await openProject(projectId); }
+    catch {
+      fail('消息已送达管家，但最新进展暂时没有刷新。请重新打开项目查看，无需再次发送。');
+    }
   } finally {
-    setBusy(false);
+    if(state.sendSequence===sendSequence){state.sending=false;syncComposer();}
   }
 }
 
 async function createProject() {
-  const name = window.prompt('给这个项目起个名字');
-  if (!name) return;
+  $('create-project-error').textContent='';
+  $('create-project-dialog').showModal();
+  $('create-project-name').focus();
+}
+async function submitProject(event) {
+  event.preventDefault();
+  if(state.busy)return;
+  const name=$('create-project-name').value.trim(),notes=$('create-project-notes').value.trim();
+  if(!name){$('create-project-error').textContent='请给项目起一个名字。';return;}
   setBusy(true);
   try {
-    const payload = await api('POST', '/api/v1/projects', { name: name.trim().slice(0, 80) });
-    await loadProjects();
-    await openProject(payload.data.project.id);
-  } finally {
-    setBusy(false);
-  }
+    const payload=await api('POST','/api/v1/projects',{name,notes});
+    $('create-project-dialog').close();$('create-project-form').reset();
+    await loadProjects();await openProject(payload.data.project.id);
+  }catch(error){$('create-project-error').textContent=error.message;if(!$('create-project-dialog').open)fail('项目已创建，但打开时未能刷新。请从项目列表重新打开，无需重复创建。');}
+  finally{setBusy(false);}
+}
+async function loadSourceSummary(id){
+  try{const {data}=await api('GET',`/api/v1/projects/${id}/sources`);if(state.project?.id!==id)return;state.sources=data.files;$('source-status').textContent=data.files.length?`已关联 ${data.files.length} 份只读资料 · 每轮最多12000字符摘录`:'';return data.files;}
+  catch{if(state.project?.id===id)$('source-status').textContent='项目资料状态暂未刷新；请打开“项目资料”核对。';return [];}
+}
+async function openSources(){
+  if(!state.project)return;
+  state.sourceCandidates=[];$('source-preview').hidden=true;$('source-consent').checked=false;
+  $('source-folder').value='';$('source-files').value='';
+  $('source-result').textContent='';$('sources-dialog').showModal();await renderSources();
+}
+async function renderSources(){
+  const files=await loadSourceSummary(state.project.id)||[];
+  $('source-empty').hidden=files.length>0;
+  $('source-existing').replaceChildren(...files.map(file=>{const li=document.createElement('li'),label=document.createElement('span'),button=document.createElement('button');label.textContent=file.path+' · '+file.bytes+' B';button.type='button';button.textContent='移除';button.addEventListener('click',async()=>{button.disabled=true;try{await api('DELETE',`/api/v1/projects/${state.project.id}/sources`,{path:file.path});await renderSources();}catch(e){$('source-result').textContent=e.message;button.disabled=false;}});li.append(label,button);return li;}));
+}
+async function previewSources(files){
+ state.sourceCandidates=[];$('source-consent').checked=false;let skipped=0;
+ for(const file of Array.from(files).slice(0,500)){
+  const path=file.webkitRelativePath||file.name;
+  if(file.size>32768||! /\.(md|markdown|txt|rst|py|js|mjs|cjs|ts|tsx|jsx|json|html|css|scss|vue|svelte|go|rs|java|c|h|cpp|sql|sh|yaml|yml|toml)$/i.test(path)||path.split('/').some(p=>p.startsWith('.')||/^(node_modules|vendor|dist|build|venv|__pycache__|coverage)$/i.test(p))){skipped++;continue;}
+  try{const content=new TextDecoder('utf-8',{fatal:true}).decode(await file.arrayBuffer());if(content.includes('\0'))throw Error();state.sourceCandidates.push({path,content});}catch{skipped++;}
+  if(state.sourceCandidates.length===50)break;
+ }
+ $('source-preview').hidden=false;$('source-skipped').textContent=`可选 ${state.sourceCandidates.length} 份；跳过或未展示 ${Math.max(skipped,files.length-state.sourceCandidates.length)} 份。请只勾选相关且无敏感内容的文件。`;
+ $('source-candidates').replaceChildren(...state.sourceCandidates.map((file,index)=>{const li=document.createElement('li'),label=document.createElement('label'),input=document.createElement('input'),text=document.createElement('span');input.type='checkbox';input.checked=true;input.dataset.sourceIndex=String(index);text.textContent=file.path;label.append(input,text);li.append(label);return li;}));
+}
+async function uploadSources(){
+ if(!$('source-consent').checked){$('source-result').textContent='请先检查清单并勾选上传授权。';return;}
+ const projectId=state.project.id,files=[...document.querySelectorAll('[data-source-index]:checked')].map(input=>state.sourceCandidates[Number(input.dataset.sourceIndex)]);
+ if(!files.length){$('source-result').textContent='请至少勾选一份资料。';return;}
+ $('upload-sources').disabled=true;let done=0;
+ try{for(const file of files){await api('POST',`/api/v1/projects/${projectId}/sources`,{files:[file]});done++;}state.sourceCandidates=[];$('source-preview').hidden=true;$('source-result').textContent=`已上传 ${done} 份只读资料，尚未调用模型。`;await renderSources();}
+ catch(e){$('source-result').textContent=`已上传 ${done} 份，其余未确认：${e.message}。请核对已有资料后再继续。`;await renderSources();}
+ finally{$('upload-sources').disabled=false;}
+}
+async function stopCurrentTask(simulation=false){
+ const operationId=simulation?state.simulationOperationId:state.nativeOperationId,projectId=state.project?.id;if(!operationId||!projectId)return;
+ const button=$(simulation?'cancel-simulation':'stop-native');button.disabled=true;
+ try{await api('POST',`/api/v1/projects/${projectId}/actions`,{action:'cancel_operation',operationId,requestId:crypto.randomUUID()});}
+ catch(error){fail(error.message);}
+ finally{state.sendSequence=(state.sendSequence||0)+1;state.sending=false;state.busy=false;syncComposer();button.disabled=false;try{await refreshProject();}catch{fail('停止后的最新状态暂未刷新，请重新打开项目核对。');}syncComposer();}
 }
 
 async function entry(event) {
@@ -606,27 +692,26 @@ function boot() {
  on('budget-scope','change',budgetTargets);on('budget-target','change',budgetSelection);
  on('admin-policy','submit',async e=>{e.preventDefault();const scope=$('budget-scope').value,scopeId=$('budget-target').value,p=serviceView.policies.find(x=>x.scope===scope&&x.scopeId===scopeId);try{await api('POST','/api/v1/admin/budgets',{scope,scopeId,limit:Number($('budget-limit').value),window:$('budget-window').value,revision:p?.revision??0,reason:$('budget-reason').value});$('admin-result').textContent='额度已保存。';await loadService();}catch(error){$('admin-result').textContent=error.message;}});
 
+  on('create-project-form','submit',submitProject);
+  for(const button of document.querySelectorAll('[data-close-dialog]'))button.addEventListener('click',()=>$(button.dataset.closeDialog).close());
+  on('project-sources','click',()=>openSources().catch(e=>fail(e.message)));
+  for(const button of document.querySelectorAll('[data-learn-project]'))button.addEventListener('click',()=>openSources().catch(e=>fail(e.message)));
+  for(const id of ['source-folder','source-files'])on(id,'change',event=>previewSources(event.target.files).catch(e=>{$('source-result').textContent=e.message;}));
+  on('upload-sources','click',uploadSources);
+  on('learn-current-project','click',()=>{$('sources-dialog').close();$('message-text').value=(state.sources?.length?'请依据我上传的项目资料，':'请先询问我需要提供哪些项目资料，')+'帮我制定零基础学习计划，再从最基础的原理开始解释。请标明文件依据，不要执行命令。';syncComposer();$('message-text').focus();});
   on('login-form', 'submit', entry);
   on('new-project', 'click', () => createProject().catch((error) => fail(error.message)));
   on('back', 'click', () => { closeEvents(); loadProjects().catch((error) => fail(error.message)); });
   on('message-form', 'submit', (event) => { event.preventDefault(); sendMessage().catch((error) => fail(error.message)); });
-  on('message-text', 'input', (event) => { $('send').disabled = event.target.value.trim() === ''; });
+  on('message-text', 'input', syncComposer);
   if ($('send')) $('send').disabled = true;
   on('confirm-artifact', 'click', () => confirmArtifact().catch((error) => fail(error.message)));
   on('artifact-version', 'change', (event) => {
     if (event.target.value) openArtifact(event.target.value).catch((error) => fail(error.message));
   });
   on('download-artifact', 'click', downloadArtifact);
-  on('stop-native', 'click', async () => {
-    if (!state.nativeOperationId || !state.project) return;
-    try { await api('POST', `/api/v1/projects/${state.project.id}/actions`, {action:'cancel_operation',operationId:state.nativeOperationId,requestId:crypto.randomUUID()}); await refreshProject(); }
-    catch (error) { fail(error.message); await refreshProject(); }
-  });
-  on('cancel-simulation', 'click', async () => {
-    if (!state.simulationOperationId || !state.project) return;
-    try { await api('POST', `/api/v1/projects/${state.project.id}/actions`, {action:'cancel_operation',operationId:state.simulationOperationId,requestId:crypto.randomUUID()}); await refreshProject(); }
-    catch(error) { fail(error.message); }
-  });
+  on('stop-native','click',()=>stopCurrentTask());
+  on('cancel-simulation','click',()=>stopCurrentTask(true));
   on('refresh-artifacts', 'click', () => {
     if (state.project) loadArtifacts(state.project.id).catch((error) => fail(error.message));
   });

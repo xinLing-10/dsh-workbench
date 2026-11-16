@@ -1,5 +1,7 @@
+import {canResume} from './execution-admission.mjs';
 /** Durable operation lifecycle. No model calls and no automatic redispatch. */
-import {randomUUID} from 'node:crypto';
+import {learningCompletion} from './learning-session.mjs';
+import {randomUUID,createHash} from 'node:crypto';
 import {validateWorkerEvent,WORKER_TERMINAL} from '../../../packages/manager-contracts/worker.mjs';
 import {bodyDigest} from '../../../packages/manager-contracts/tokens.mjs';
 import {leaseIsActive,acquireLease} from './workers.mjs';
@@ -9,7 +11,10 @@ export const executionFor=(db,id)=>db.prepare('SELECT * FROM worker_executions W
 export const executionClaims=run=>({sub:run.worker_id,tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,leaseId:run.lease_id,generation:run.generation});
 export function executionJob(db,run) {
  const row=db.prepare("SELECT payload_json FROM project_events WHERE operation_id=? AND type='message_created' ORDER BY id LIMIT 1").get(run.operation_id);
- return {protocolVersion:1,workerId:run.worker_id,tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,leaseId:run.lease_id,generation:run.generation,engineId:run.engine_id,payloadHash:run.payload_hash,deadline:run.deadline,text:JSON.parse(row?.payload_json || '{}').text || ''};
+ const payload=JSON.parse(row?.payload_json || '{}');
+ if(payload.workerText && createHash('sha256').update(JSON.stringify({type:'send_message',text:payload.text||'',...(payload.taskRequest?{task:payload.taskRequest,...(payload.learningRequest?{learning:payload.learningRequest}:{})}:{})})).digest('hex')!==run.payload_hash)throw conflict('消息快照校验失败');
+ const text=payload.workerText||payload.text||'';
+ return {protocolVersion:1,workerId:run.worker_id,tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,leaseId:run.lease_id,generation:run.generation,engineId:run.engine_id,payloadHash:payload.workerText?createHash('sha256').update(JSON.stringify({type:'send_message',text})).digest('hex'):run.payload_hash,deadline:run.deadline,text};
 }
 export function requireExecution(db,claims,{allowTerminal=false}={}) {
  const run=executionFor(db,claims.operationId);
@@ -46,14 +51,14 @@ export function acceptWorkerEvent(db,claims,event,append) {
    const cards=db.prepare("SELECT id FROM interaction_requests WHERE operation_id=? AND state='pending'").all(run.operation_id);
    db.prepare("UPDATE interaction_requests SET state='cancelled' WHERE operation_id=? AND state='pending'").run(run.operation_id);
    for(const c of cards)events.push(append(db,{tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,type:'interaction_cancelled',payload:{interactionId:c.id}}));
-   if(state==='completed')events.push(append(db,{tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,type:'message_completed',payload:{text:event.text || '',scope:'worker-protocol-v1',engineReceipt:true}}));
+   if(state==='completed')events.push(append(db,{tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,type:'message_completed',payload:{text:learningCompletion(db,run,event),scope:'worker-protocol-v1',engineReceipt:true}}));
   }
   if(event.type!=='heartbeat')events.push(append(db,{tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,type:'task_status',payload:{state,workerProtocol:true,sequence:event.sequence,engineReceipt:WORKER_TERMINAL.includes(state)}}));
   db.exec('COMMIT');
  }catch(error){db.exec('ROLLBACK');throw error;}
  return {state,replayed:false,events};
 }
-export function createWorkerCoordinator({db,workerId,transport,append,publish=()=>{},paused=()=>false,budget=null,requireIsolation=false}) {
+export function createWorkerCoordinator({db,workerId,transport,append,publish=()=>{},paused=()=>false,budget=null,requireIsolation=false,admit=()=>true}) {
  const worker=db.prepare("SELECT * FROM workers WHERE id=? AND status='active'").get(workerId);if(!worker)throw conflict('Worker 未注册或已停用');
  let busy=false,ready=false;
  const emit=events=>{for(const e of events)try{publish(e);}catch{}};
@@ -72,7 +77,7 @@ export function createWorkerCoordinator({db,workerId,transport,append,publish=()
     const observation=await transport.observe(executionJob(db,run));
     if(observation?.engineId!==run.engine_id || observation?.state==='uncertain' || !leaseIsActive(db,executionClaims(run))) {uncertain(run,'执行进程或租约待核对，不会重发');continue;}
     if(run.state==='uncertain'){
-      const state=run.stop_requested?'stopping':db.prepare("SELECT 1 FROM interaction_requests WHERE operation_id=? AND state='pending'").get(run.operation_id)?'waiting':'running';
+      const state=run.stop_requested?'stopping':db.prepare("SELECT 1 FROM interaction_requests WHERE operation_id=? AND state='pending'").get(run.operation_id)?'waiting':canResume(db,run.operation_id)?'running':'waiting';
       db.prepare('UPDATE worker_executions SET state=?,updated_at=? WHERE operation_id=?').run(state,now(),run.operation_id);
       db.prepare('UPDATE operations SET state=?,updated_at=? WHERE id=?').run(state==='stopping'?'running':state,now(),run.operation_id);
       emit([append(db,{tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,type:'recovery_check',payload:{state,reattached:true,workerProtocol:true}})]);
@@ -87,6 +92,7 @@ export function createWorkerCoordinator({db,workerId,transport,append,publish=()
   if(db.prepare("SELECT 1 FROM worker_executions WHERE worker_id=? AND state NOT IN ('completed','cancelled','failed')").get(workerId))return false;
   if(budget)budget.expireHolds();
   const op=db.prepare("SELECT o.* FROM operations o JOIN operation_outbox q ON q.operation_id=o.id JOIN projects p ON p.id=o.project_id WHERE o.tenant_id=? AND o.type='send_message' AND o.state='queued' AND p.status='active' AND q.next_at<=? AND NOT EXISTS(SELECT 1 FROM worker_executions r WHERE r.operation_id=o.id) ORDER BY q.id LIMIT 100").all(worker.tenant_id,now()).find(candidate=>{if(!budget)return true;try{budget.check(candidate.id);return true;}catch{return false;}});if(!op)return false;
+  if(!admit())return false;
   const lease=acquireLease(db,{workerId,projectId:op.project_id,operationId:op.id,ttlMs:60000});
   const engineId='eng_'+randomUUID().replaceAll('-','');const created=now();let event;
   db.exec('BEGIN IMMEDIATE');try{

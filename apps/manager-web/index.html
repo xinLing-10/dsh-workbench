@@ -16,7 +16,7 @@
   </aside>
   <header class="topbar">
     <div class="workspace-label"><span class="status-dot" aria-hidden="true"></span> 你的专属工作空间</div>
-    <div class="row account"><span class="muted" id="whoami"></span><button id="admin-open" hidden>服务管理</button></div>
+    <div class="row account"><a class="help-link" href="/help" target="_blank" rel="noopener">帮助文档</a><span class="muted" id="whoami"></span><button id="admin-open" hidden>服务管理</button></div>
   </header>
 
   <main id="app">
@@ -83,12 +83,12 @@
     <section id="project" hidden>
       <header class="project-header">
         <div class="project-heading"><span class="project-symbol" aria-hidden="true">✧</span><div><p class="eyebrow">和项目管家一起</p><h1 id="project-name"></h1></div></div>
-        <div class="row project-actions"><span class="muted" id="live-state" role="status"></span><button type="button" id="back">所有项目</button><button type="button" id="toggle-artifacts" aria-expanded="false" aria-controls="artifacts">我的成果 <span id="artifact-count">0</span></button></div>
+        <div class="row project-actions"><span class="muted" id="live-state" role="status"></span><button type="button" id="project-sources">项目资料</button><button type="button" id="back">所有项目</button><button type="button" id="toggle-artifacts" aria-expanded="false" aria-controls="artifacts">我的成果 <span id="artifact-count">0</span></button></div>
       </header>
       <div class="project-layout" id="project-layout">
         <section class="conversation" aria-label="与管家的对话">
           <div class="conversation-scroll" id="conversation-scroll" tabindex="0" aria-label="对话记录">
-            <div id="chat-welcome" class="chat-welcome"><span class="welcome-symbol" aria-hidden="true">✳</span><p class="eyebrow">你的想法，值得被认真对待</p><h2>你好，今天想一起完成什么？</h2><p>从一句话开始。管家会帮你理清思路，一步步完成。</p><div class="starter-prompts"><button type="button" data-prompt="我有一个想法，请帮我把需求整理清楚。"><span aria-hidden="true">✧</span> 帮我理清一个想法</button><button type="button" data-prompt="我想改进现有项目，请先帮我分析应该从哪里开始。"><span aria-hidden="true">↗</span> 改进现有的项目</button><button type="button" data-prompt="我想学懂这个项目，请从最基础的原理开始解释。"><span aria-hidden="true">◇</span> 带我学懂这个项目</button></div></div>
+            <div id="chat-welcome" class="chat-welcome"><span class="welcome-symbol" aria-hidden="true">✳</span><p class="eyebrow">你的想法，值得被认真对待</p><h2>你好，今天想一起完成什么？</h2><p>从一句话开始。管家会帮你理清思路，一步步完成。</p><div class="starter-prompts"><button type="button" data-prompt="我有一个想法，请帮我把需求整理清楚。"><span aria-hidden="true">✧</span> 帮我理清一个想法</button><button type="button" data-prompt="我想改进现有项目，请先帮我分析应该从哪里开始。"><span aria-hidden="true">↗</span> 改进现有的项目</button><button type="button" data-learn-project><span aria-hidden="true">◇</span> 带我学懂这个项目</button></div></div>
             <ol id="messages" class="messages" aria-label="消息历史"></ol>
             <div id="interactions" class="stack" aria-live="polite"></div>
           </div>
@@ -97,7 +97,7 @@
             <label class="sr-only" for="message-text">消息</label>
             <textarea id="message-text" rows="2" maxlength="8000" placeholder="告诉管家你的想法，我们一起把它实现……"></textarea>
             <div class="composer-actions"><span class="composer-hint">说想法，也可以随时问为什么</span><div class="row"><button type="button" id="stop-native" hidden>停止当前任务</button><button type="button" id="cancel-simulation" hidden>取消模拟任务</button><button type="submit" class="primary" id="send">发送 <span aria-hidden="true">↑</span></button></div></div>
-          </form><p class="dispatch-note muted" id="dispatch-note" role="status"></p><p class="composer-footnote">重要操作会先征求你的同意，成果由你阅读后确认。</p></div>
+          </form><p class="dispatch-note muted" id="source-status" role="status"></p><p class="dispatch-note muted" id="dispatch-note" role="status"></p><p class="composer-footnote">重要操作会先征求你的同意，成果由你阅读后确认。</p></div>
         </section>
         <aside id="artifacts" class="artifacts-panel" aria-label="我的成果" hidden>
           <div class="row space panel-header"><div><p class="eyebrow">每一步，都有收获</p><h2>我的成果</h2></div><button type="button" id="close-artifacts" aria-label="关闭成果面板">✕</button></div>
@@ -115,6 +115,23 @@
     </section>
   </main>
 
+  <dialog id="create-project-dialog" class="workspace-dialog" aria-labelledby="create-project-title">
+    <form id="create-project-form" class="stack"><div class="row space"><div><p class="eyebrow">从一个想法开始</p><h2 id="create-project-title">新建项目</h2></div><button type="button" data-close-dialog="create-project-dialog" aria-label="关闭新建项目">✕</button></div>
+      <label>项目名称<input id="create-project-name" maxlength="80" required placeholder="例如：我的预约小助手" autocomplete="off"></label>
+      <label>备注（选填）<textarea id="create-project-notes" maxlength="1000" rows="3" placeholder="想解决什么问题？已有项目可以简单介绍它的用途。"></textarea></label>
+      <p class="muted">创建后可以与管家沟通，也可以上传已有项目的资料来学习。创建项目不会自动调用模型。</p><p id="create-project-error" class="error" role="alert"></p>
+      <div class="row dialog-footer"><button type="button" data-close-dialog="create-project-dialog">取消</button><button type="submit" id="create-project-submit" class="primary">创建项目</button></div>
+    </form>
+  </dialog>
+  <dialog id="sources-dialog" class="workspace-dialog sources-dialog" aria-labelledby="sources-title">
+    <div class="row space"><div><p class="eyebrow">从自己的项目学起</p><h2 id="sources-title">项目资料</h2></div><button type="button" data-close-dialog="sources-dialog" aria-label="关闭项目资料">✕</button></div>
+    <p class="muted">选择本机文件夹或文件，检查清单后再上传只读副本。不会修改本机原项目，也不会运行上传的代码。后续发送消息时，相关文字摘录会交给模型帮助讲解。</p>
+    <div class="row source-pickers"><label class="file-picker">选择文件夹<input id="source-folder" type="file" webkitdirectory multiple></label><label class="file-picker">选择文件<input id="source-files" type="file" multiple></label></div>
+    <p class="muted">支持常见源码和文字资料；每文件32KB、每项目50份/512KB。每轮模型最多读取12000字符，资料不全时请分批提问。隐藏文件、依赖目录及常见凭据会跳过，仍请自行检查敏感内容。</p>
+    <div id="source-preview" hidden><h3>确认本次上传</h3><p id="source-skipped" class="muted"></p><ul id="source-candidates" class="source-list"></ul><label class="source-consent"><input type="checkbox" id="source-consent">我已检查勾选资料，允许上传至服务器，并在后续对话中将摘录发送给模型。</label><button type="button" id="upload-sources" class="primary">上传所选资料</button></div>
+    <p id="source-result" role="status"></p><h3>当前项目已有资料</h3><ul id="source-existing" class="source-list"></ul><p class="muted" id="source-empty">尚未上传资料。</p>
+    <div class="row dialog-footer"><button type="button" data-close-dialog="sources-dialog">返回对话</button><button type="button" id="learn-current-project" class="primary">用当前资料开始学习</button></div>
+  </dialog>
   <script type="module" src="/app.js"></script>
 </body>
 </html>

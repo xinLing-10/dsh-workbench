@@ -1,9 +1,19 @@
+import {boardDirectory,managedPath} from '../../../dsh-workbench/core/artifacts.js';
+import {createCoreWorkerRuntime} from './core-worker-runtime.mjs';
+import {createMessageStream,streamMessages} from './message-stream.mjs';
+import {taskInput,bindTask,taskGraph,operationTask} from './business-tasks.mjs';
+import {conversationContext} from './conversation-context.mjs';
+import {learningInput,prepareLearning,learningProgress,learningHistory,restoreLearning} from './learning-session.mjs';
+import {resumeAnswered} from './execution-admission.mjs';
+import {sourceList,saveSources} from './project-sources.mjs';
+import {artifactName} from '../../../packages/manager-contracts/artifact-name.mjs';
 import {invitationOverview,issueInvitation} from './admin-invitations.mjs';
 import {serviceDashboard} from './service-dashboard.mjs';
 import {createServiceBudget,isPlatformAdmin} from './service-budget.mjs';
 import { executionFor, executionClaims, requireExecution, acceptWorkerEvent } from './worker-executions.mjs';
 import { bodyDigest } from '../../../packages/manager-contracts/tokens.mjs';
 import { createProductManager } from './manager-core.mjs';
+import {exportDocument,exportTypes} from './document-export.mjs';
 import { assertCurrentDocument } from '../../../packages/manager-core/index.mjs';
 import { authenticateWorker, leaseIsActive } from './workers.mjs';
 import { normalizeQuestions, validateQuestionAnswer } from '../../../packages/manager-contracts/questions.mjs';
@@ -47,7 +57,8 @@ export function appendEvent(db, { tenantId, projectId, type, operationId = null,
 export function createApp({ db, config, bridge, managerRuntime = null, modelGateway = null, clock = () => new Date() }) {
   const serviceBudget=createServiceBudget({db,clock});
   const workspace = createWorkspace({ root: config.workspaceRoot || '' });
-  const managerCore = createProductManager({db,workspace,runtime:managerRuntime});
+  const coreRuntime=managerRuntime||(config.workerProtocol&&workspace.configured?createCoreWorkerRuntime({db,workspace,append:appendEvent,publish:e=>emit(e),cancel:b=>bridge.cancel(b)}):null);
+  const managerCore = createProductManager({db,workspace,runtime:coreRuntime});
   const artifactBytes = async artifact => {
     const snapshot = db.prepare('SELECT bytes FROM artifact_contents WHERE artifact_id = ?').get(artifact.id);
     if (snapshot) {
@@ -64,6 +75,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     const { path } = await workspace.resolveArtifact(artifact.project_id, artifact.relative_path);
     return readFile(path);
   };
+  const presentArtifact = async row => {let text='';if(/\.(md|markdown|txt)$/i.test(row.relative_path))try{text=(await artifactBytes(row)).toString('utf8').slice(0,200000);}catch{}const link=db.prepare('SELECT source_operation_id operation_id FROM artifact_contents WHERE artifact_id=?').get(row.id);return {...artifactView(row),operationId:link?.operation_id||null,task:link?.operation_id?operationTask(db,link.operation_id):null,name:artifactName(text,row.relative_path)};};
   const limitLogin = createRateLimiter({ limit: 10, windowMs: 60_000 });
   const subscribers = new Map(); // projectId -> Set<(event) => void>
   const startedAt = clock().toISOString();
@@ -135,9 +147,11 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     if(typeof claims==='string'){sendInternalFailure(res,claims);return;}
     if(config.modelCallsPaused || !config.formalService || !modelGateway || !(bridge.workerCapabilities?bridge.workerCapabilities(claims.sub):bridge.capabilities()).isolated){sendError(res,503,ERROR_CODES.capability_unavailable,'正式模型网关未启用');return;}
     const run=requireExecution(db,claims);if(!run){sendError(res,409,ERROR_CODES.conflict,'需要统一 Worker 执行记录');return;}
+    if(run.state==='waiting'){sendError(res,409,ERROR_CODES.conflict,'等待回答或执行资源，不能提前调用模型');return;}
     serviceBudget.expireHolds();
     const controller=new AbortController();const abort=()=>{if(!res.writableEnded)controller.abort();};res.on('close',abort);
-    try{const data=await modelGateway.message({operationId:claims.operationId,id:body.id,body:body.body,signal:controller.signal,authorizeDispatch:()=>requireExecution(db,claims)});if(!res.destroyed)sendJson(res,200,{ok:true,data});}finally{res.off('close',abort);}
+    const stream=createMessageStream({db,run,requestId:body.id,append:appendEvent,publish:emit,authorize:()=>requireExecution(db,claims)});
+    try{const coreJob=db.prepare('SELECT kind FROM core_sessions WHERE operation_id=?').get(claims.operationId);const learningOnly=coreJob?coreJob.kind!=='work':operationTask(db,claims.operationId)?.kind==='learning';const modelBody=learningOnly?Object.fromEntries(Object.entries(body.body||{}).filter(([key])=>!['tools','tool_choice'].includes(key))):body.body;const data=await modelGateway.message({operationId:claims.operationId,id:body.id,body:modelBody,onText:delta=>stream.text(delta),signal:controller.signal,authorizeDispatch:()=>requireExecution(db,claims)});if(!res.destroyed)sendJson(res,200,{ok:true,data});}finally{try{stream.close();}finally{res.off('close',abort);}}
   });
 
   // requireSession enforces authentication, Origin AND CSRF for every POST.
@@ -147,10 +161,23 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     const project=projectFor(db,session.tenantId,params.id);
     if(!project){sendError(res,404,ERROR_CODES.not_found,'项目不存在');return;}
     const body=method==='POST'?await readJson(req,config.maxBodyBytes):undefined;
+    if(method==='POST'&&['manager/actions','learning/actions'].includes(suffix))coreRuntime?.bind?.(project,project.board_id||project.id,session.userId);
     const data=await handler(project,body,url);
     if(method==='POST')emit(appendEvent(db,{tenantId:session.tenantId,projectId:project.id,type:'task_status',payload:{sharedCore:true}}));
     sendJson(res,200,{ok:true,data});
   });
+  coreRoute('POST','tasks/(?<tid>[\\w]+)/progress',async(p,b,url)=>{const taskId=url.pathname.split('/').at(-2);const task=db.prepare("SELECT id FROM business_tasks WHERE id=? AND project_id=? AND tenant_id=? AND kind='learning'").get(taskId,p.id,p.tenant_id);if(!task)throw Object.assign(new Error('学习任务不存在'),{status:404,code:'not_found'});if(db.prepare('SELECT 1 FROM core_bindings WHERE task_id=?').get(task.id))throw Object.assign(Error('请在深度陪学中记录当前计划进度'),{status:409,code:'conflict'});return learningProgress(db,task.id,b);});
+  const workflowRoute=(method,suffix,handler)=>route(method,new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/tasks/(?<tid>[\\w]+)/${suffix}$`),async({req,res,params,url})=>{const session=requireSession(req,res);if(!session)return;const project=projectFor(db,session.tenantId,params.id),task=project&&db.prepare('SELECT * FROM business_tasks WHERE id=? AND project_id=? AND tenant_id=?').get(params.tid,project.id,session.tenantId);if(!task){sendError(res,404,ERROR_CODES.not_found,'任务不存在');return;}const scoped={...project,board_id:task.id};const body=method==='POST'?await readJson(req,config.maxBodyBytes):null;if(method==='POST'&&suffix==='workflow'){const pending=db.prepare("SELECT 1 FROM operations o JOIN business_task_operations l ON l.operation_id=o.id WHERE l.task_id=? AND o.state IN ('queued','accepted','running','waiting','uncertain') AND NOT EXISTS(SELECT 1 FROM core_sessions s WHERE s.operation_id=o.id)").get(task.id);if(pending)throw Object.assign(Error('旧对话仍在处理，请先等待或停止后再启用深度流程'),{status:409,code:'conflict'});coreRuntime?.bind?.(scoped,task.id,session.userId);}const data=await handler(scoped,body,url);if(method==='POST')emit(appendEvent(db,{tenantId:project.tenant_id,projectId:project.id,type:'task_status',payload:{sharedCore:true,taskId:task.id}}));sendJson(res,200,{ok:true,data});});
+  workflowRoute('GET','workflow',async p=>({manager:await managerCore.view(p)}));
+  workflowRoute('POST','workflow',async(p,b)=>({manager:await managerCore.mutate(p,b)}));
+  workflowRoute('GET','delivery-templates',async p=>managerCore.delivery(p).catalog());
+  workflowRoute('POST','delivery-templates',async(p,b)=>managerCore.delivery(p).generate(b));
+  workflowRoute('GET','document-review',async(p,b,u)=>managerCore.documents(p).review(u.searchParams.get('name')));
+  workflowRoute('GET','learning-sources',async p=>managerCore.learning(p).sources());
+  workflowRoute('GET','learning-history',async p=>({versions:learningHistory(db,p.board_id)}));
+  workflowRoute('POST','learning-restore',async(p,b)=>{if(db.prepare('SELECT 1 FROM core_bindings WHERE task_id=?').get(p.board_id))throw Object.assign(Error('请在深度陪学中切换历史计划'),{status:409,code:'conflict'});return restoreLearning(db,p.board_id,b);});
+  workflowRoute('GET','knowledge',async(p,b,url)=>managerCore.knowledge(p).view(Object.fromEntries(url.searchParams)));
+  route('GET',new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/tasks/(?<tid>[\\w]+)/workflow/download$`),async({req,res,params,url})=>{const session=requireSession(req,res);if(!session)return;const p=projectFor(db,session.tenantId,params.id),task=p&&db.prepare('SELECT id FROM business_tasks WHERE id=? AND project_id=? AND tenant_id=?').get(params.tid,p.id,session.tenantId);if(!task){sendError(res,404,ERROR_CODES.not_found,'任务不存在');return;}const scoped={...p,board_id:task.id},v=await managerCore.view(scoped),learning=url.searchParams.get('kind')==='learning',entry=learning?v.learning?.export:v.delivery;if(!entry){sendError(res,404,ERROR_CODES.not_found,'请先生成资料包');return;}const root=await workspace.projectDir(p.id),expected=boardDirectory(task.id)+(learning?'/learning/exports/':'/deliveries/');if(!entry.path.startsWith(expected))throw Object.assign(Error('交付记录越界'),{status:409});const bytes=await readFile(await managedPath(root,entry.path));if(!entry.sha256||sha256(bytes)!==entry.sha256)throw Object.assign(Error('资料包版本校验失败，请重新生成'),{status:409});const extension=entry.path.split('.').at(-1),name=(learning?'项目学习资料':'项目交付文档')+'.'+extension;res.writeHead(200,{'content-type':extension==='zip'?'application/zip':'application/octet-stream','content-length':bytes.length,'content-disposition':`attachment; filename*=UTF-8''${encodeURIComponent(name)}`,'cache-control':'no-store'});res.end(bytes);});
   coreRoute('GET','manager',async p=>({coreVersion:managerCore.version,manager:await managerCore.view(p)}));
   coreRoute('POST','manager/actions',async(p,b)=>({manager:await managerCore.mutate(p,b)}));
   coreRoute('GET','knowledge',async(p,b,url)=>managerCore.knowledge(p).view(Object.fromEntries(url.searchParams)));
@@ -259,6 +286,14 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     sendJson(res, 200, { ok: true, data: { projects: rows.map(projectView) } });
   });
 
+  for(const method of ['GET','POST','DELETE'])route(method,new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/sources$`),async({req,res,params})=>{
+    const session=requireSession(req,res);if(!session)return;const project=projectFor(db,session.tenantId,params.id);if(!project){sendError(res,404,ERROR_CODES.not_found,'项目不存在');return;}
+    if(method==='POST'){const body=await readJson(req,config.maxBodyBytes);saveSources(db,project.id,body.files);}
+    if(method==='DELETE'){const body=await readJson(req,config.maxBodyBytes);if(typeof body.path!=='string'){sendError(res,400,ERROR_CODES.validation,'请选择要移除的资料');return;}db.prepare('DELETE FROM project_sources WHERE project_id=? AND path=?').run(project.id,body.path);}
+    sendJson(res,200,{ok:true,data:{files:sourceList(db,project.id),limits:{files:50,fileBytes:32768,totalBytes:524288,contextChars:12000}}});
+  });
+  route('GET', /^\/help$/,({res})=>sendStatic(res,'customer-help.html'));
+
   route('POST', new RegExp(`^${API_PREFIX}/projects$`), async ({ req, res }) => {
     const session = requireSession(req, res);
     if (!session) return;
@@ -268,11 +303,18 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       sendError(res, 400, ERROR_CODES.validation, '项目名需要 1-80 个字符');
       return;
     }
+    const notes = body.notes === undefined ? '' : body.notes;
+    if(typeof notes!=='string'||notes.length>1000){sendError(res,400,ERROR_CODES.validation,'备注最多1000个字符');return;}
+    const globalBudget=serviceBudget.view('global','*'),userBudget=serviceBudget.view('user',session.userId);
+    const autoLimit=config.formalService&&Number.isSafeInteger(config.newProjectTokenLimit)&&config.newProjectTokenLimit>0&&globalBudget.configured&&userBudget.configured?Math.min(config.newProjectTokenLimit,globalBudget.limit,userBudget.limit):0;
+    const autoAdmin=autoLimit>0?db.prepare('SELECT user_id FROM platform_admins LIMIT 1').get()?.user_id:null;
     const id = publicId('prj');
     const at = nowIso();
     if(config.formalService)await workspace.provisionProject(id);
     db.prepare('INSERT INTO projects (id, tenant_id, name, workspace_key, board_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)')
       .run(id, session.tenantId, name, `ws_${randomBytes(8).toString('hex')}`, 'active', at, at);
+    db.prepare('UPDATE projects SET notes=? WHERE id=?').run(notes.trim(),id);
+    if(autoAdmin)serviceBudget.policy(autoAdmin,{scope:'project',scopeId:id,limit:autoLimit,window:'lifetime',revision:0,reason:'服务配置批准的新项目默认额度，仍共同受用户和全局硬上限约束，不增加总预算'});
     appendEvent(db, { tenantId: session.tenantId, projectId: id, type: 'task_status', payload: { state: 'created' } });
     sendJson(res, 201, { ok: true, data: { project: projectView(projectFor(db, session.tenantId, id)) } });
   });
@@ -291,14 +333,15 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       ok: true,
       data: {
         project: projectView(project),
-        operations: operations.map(operationView),
+        operations: operations.map(o=>({...operationView(o),task:operationTask(db,o.id)})),
+        tasks:taskGraph(db,project),
         interactions: interactions.map(interactionView),
         capabilities: bridge.capabilities(),
       },
     });
   });
 
-  route('GET', new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/messages$`), async ({ req, res, params }) => {
+  route('GET', new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/messages$`), async ({ req, res, params, url }) => {
     const session = requireSession(req, res);
     if (!session) return;
     const project = projectFor(db, session.tenantId, params.id);
@@ -306,8 +349,8 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       sendError(res, 404, ERROR_CODES.not_found, '项目不存在');
       return;
     }
-    const rows = db.prepare("SELECT * FROM project_events WHERE project_id = ? AND type IN ('message_created','message_completed','interaction_answered') ORDER BY id").all(project.id);
-    sendJson(res, 200, { ok: true, data: { messages: rows.map(messageView) } });
+    const rows = db.prepare("SELECT * FROM project_events WHERE project_id = ? AND type IN ('message_created','message_completed','interaction_answered','manager_message') AND NOT EXISTS(SELECT 1 FROM core_sessions c WHERE c.operation_id=project_events.operation_id) ORDER BY id").all(project.id);
+    sendJson(res, 200, { ok: true, data: { messages: [...rows.map(row=>({...messageView(row),task:row.operation_id?operationTask(db,row.operation_id):JSON.parse(row.payload_json||'{}').task||null})),...(url.searchParams.get("includePreview")==="1"?streamMessages(db,project.id):[])].sort((a,b)=>a.id-b.id) } });
   });
 
   route('POST', new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/messages$`), async ({ req, res, params }) => {
@@ -333,7 +376,8 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       sendError(res, 400, ERROR_CODES.validation, '缺少有效请求编号');
       return;
     }
-    const payloadHash = sha256(json({ type: 'send_message', text }));
+    const task=taskInput(body),learning=learningInput(body,task.mode);
+    const payloadHash = sha256(json({ type: 'send_message', text, ...(body.mode!==undefined||body.taskId!==undefined||body.taskTitle!==undefined?{task,...(learning?{learning}: {})}: {}) }));
     const existing = db.prepare('SELECT * FROM operations WHERE tenant_id = ? AND project_id = ? AND request_id = ?')
       .get(session.tenantId, project.id, requestId);
     const decision = idempotencyDecision(existing ? { payloadHash: existing.payload_hash } : null, payloadHash);
@@ -342,7 +386,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       return;
     }
     if (decision === 'replay') {
-      sendJson(res, 200, { ok: true, data: { operation: operationView(existing), dispatch: 'replayed' } });
+      sendJson(res, 200, { ok: true, data: { operation: {...operationView(existing),task:operationTask(db,existing.id)}, dispatch: 'replayed' } });
       return;
     }
     if (bridge.capabilities().paused) { sendError(res,409,ERROR_CODES.capability_unavailable,'模型调用已暂停，请联系管理员核对用量；历史仍可查看，不要重复发送。'); return; }
@@ -356,12 +400,18 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
         .run(id, session.tenantId, project.id, requestId, payloadHash, at, at, config.simulationFlow ? 1 : 0, session.userId);
       db.prepare('INSERT INTO operation_outbox (operation_id, event, next_at, created_at) VALUES (?, ?, ?, ?)')
         .run(id, 'dispatch', at, at);
+      const linkedTask=bindTask(db,project,id,text,task);
+      const context=conversationContext(db,project,text,{maxBytes:Math.max(0,(learning?22000:30000)-Buffer.byteLength(text)),taskId:task.taskId});
+      if(learning&&learning.action!=='question'&&db.prepare('SELECT 1 FROM core_bindings WHERE task_id=?').get(linkedTask.id))throw Object.assign(Error('此任务已升级到深度陪学，请在任务与学习中管理课程、计划与复述，避免两个计划分叉'),{status:409,code:'conflict'});
+      const lesson=prepareLearning(db,linkedTask.id,learning,text,context);
+      const workerText=lesson?lesson.prompt:text+'\n\n'+context.text;
+      if(Buffer.byteLength(workerText)>32768)throw Object.assign(new Error('学习上下文过大，请缩短问题或资料'),{status:400,code:'validation'});
       event = appendEvent(db, {
         tenantId: session.tenantId,
         projectId: project.id,
         type: 'message_created',
         operationId: id,
-        payload: { text, state: 'queued' },
+        payload: { text, state: 'queued', task:linkedTask, ...(body.mode!==undefined||body.taskId!==undefined||body.taskTitle!==undefined?{taskRequest:task,...(learning?{learningRequest:learning}: {})}:{}), ...(lesson?{learning:{...lesson,prompt:undefined}}:{}), context:{...context,text:undefined}, ...(context.text?{workerText,sourcePaths:context.refs.filter(r=>r.type==='source').map(r=>r.path),sourceTruncated:context.truncated}:{}) },
       });
       db.exec('COMMIT');
     } catch (error) {
@@ -371,7 +421,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     emit(event);
     sendJson(res, 202, {
       ok: true,
-      data: { operation: operationView(db.prepare('SELECT * FROM operations WHERE id = ?').get(id)), dispatch: config.simulate ? 'simulation_queued' : bridge.capabilities().workerProtocol ? 'worker_queued' : bridge.capabilities().readonly ? 'readonly_queued' : 'unavailable', capabilities: bridge.capabilities() },
+      data: { operation: {...operationView(db.prepare('SELECT * FROM operations WHERE id = ?').get(id)),task:operationTask(db,id)}, dispatch: config.simulate ? 'simulation_queued' : bridge.capabilities().workerProtocol ? 'worker_queued' : bridge.capabilities().readonly ? 'readonly_queued' : 'unavailable', capabilities: bridge.capabilities() },
     });
   });
 
@@ -516,12 +566,12 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
         sendError(res, 409, ERROR_CODES.conflict, '该请求已回答或已过期，请刷新后查看');
         return;
       }
-      if(execution){db.prepare("UPDATE worker_executions SET state='running',updated_at=? WHERE operation_id=?").run(nowIso(),row.operation_id);db.prepare("UPDATE operations SET state='running',updated_at=? WHERE id=?").run(nowIso(),row.operation_id);}
+      if(execution)resumeAnswered(db,row.operation_id);
       event = appendEvent(db, {
         tenantId: session.tenantId,
         projectId: project.id,
         type: 'interaction_answered',
-        operationId: row.operation_id,
+        operationId: row.operation_id || row.operationId,
         payload: { interactionId: row.id, kind: row.kind },
       });
       db.exec('COMMIT');
@@ -574,6 +624,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       return;
     }
     const kind = body.kind === 'permission' ? 'permission' : body.kind === 'question' ? 'question' : '';
+    if(kind==='permission'&&(operationTask(db,claims.operationId)?.kind==='learning'||db.prepare("SELECT 1 FROM core_sessions WHERE operation_id=? AND kind!='work'").get(claims.operationId))){sendError(res,403,ERROR_CODES.forbidden,'陪学模式禁止执行命令');return;}
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim().slice(0, 4000) : '';
     if (kind === '' || prompt === '') {
       sendError(res, 400, ERROR_CODES.validation, '需要 kind（question|permission）与 prompt');
@@ -621,7 +672,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     let event;
     try {
       const changed = db.prepare("UPDATE interaction_requests SET state = 'cancelled' WHERE id = ? AND state = 'pending'").run(row.id);
-      if (changed.changes) event = appendEvent(db, { tenantId: row.tenant_id, projectId: row.project_id, type: 'interaction_cancelled', operationId: row.operation_id, payload: { interactionId: row.id } });
+      if (changed.changes) event = appendEvent(db, { tenantId: row.tenant_id, projectId: row.project_id || row.projectId, type: 'interaction_cancelled', operationId: row.operation_id, payload: { interactionId: row.id } });
       db.exec('COMMIT');
     } catch (error) { db.exec('ROLLBACK'); throw error; }
     if (event) emit(event);
@@ -710,7 +761,8 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       if (res.destroyed) return;
       if (!leaseIsActive(db, claims)) { sendInternalFailure(res, 'lease'); return; }
       const current = db.prepare('SELECT * FROM interaction_requests WHERE id = ?').get(row.id);
-      if (current.state === 'answered') {
+      if(current.state==='answered')requireExecution(db,claims);
+      if (current.state === 'answered' && resumeAnswered(db,claims.operationId)) {
         sendJson(res, 200, { ok: true, data: { state: 'answered', answer: current.answer } });
         return;
       }
@@ -740,10 +792,10 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       sendError(res, 404, ERROR_CODES.not_found, '项目不存在');
       return;
     }
-    const rows = db.prepare('SELECT * FROM artifact_index WHERE project_id = ? ORDER BY version DESC, created_at DESC').all(project.id);
+    const rows = db.prepare(`SELECT a.* FROM artifact_index a WHERE project_id = ? AND NOT EXISTS(SELECT 1 FROM artifact_contents c JOIN core_sessions s ON s.operation_id=c.source_operation_id WHERE c.artifact_id=a.id AND a.relative_path NOT LIKE '.dsh/workbench/changes/%/documents/%' AND NOT EXISTS(SELECT 1 FROM template_exports x WHERE x.artifact_id=a.id)) ORDER BY version DESC, created_at DESC`).all(project.id);
     const latest = new Map();
     for (const row of rows) if (!latest.has(row.relative_path)) latest.set(row.relative_path, row);
-    sendJson(res, 200, { ok: true, data: { artifacts: [...latest.values()].map(artifactView) } });
+    sendJson(res, 200, { ok: true, data: { artifacts: await Promise.all([...latest.values()].map(presentArtifact)) } });
   });
 
   route('GET', new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/artifacts/(?<aid>[\\w]+)$`), async ({ req, res, params }) => {
@@ -768,7 +820,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       sendJson(res, 200, {
         ok: true,
         data: {
-          artifact: artifactView(artifact),
+          artifact: await presentArtifact(artifact),
           text: bytes.toString('utf8').slice(0, 200_000),
           truncated: bytes.length > 200_000,
         },
@@ -794,7 +846,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     const rows = db.prepare('SELECT * FROM artifact_index WHERE project_id = ? AND relative_path = ? ORDER BY version DESC').all(project.id, artifact.relative_path);
     sendJson(res, 200, {
       ok: true,
-      data: { versions: rows.map(artifactView), latestId: rows[0] ? rows[0].id : null },
+      data: { versions: await Promise.all(rows.map(presentArtifact)), latestId: rows[0] ? rows[0].id : null },
     });
   });
 
@@ -811,6 +863,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       sendError(res, 404, ERROR_CODES.not_found, '成果不存在');
       return;
     }
+    if(/^\.dsh\/workbench\/changes\/[^/]+\/documents\//.test(artifact.relative_path)){sendError(res,409,ERROR_CODES.conflict,'请在任务与学习的阶段与交付中阅读并确认整个阶段，避免两套确认状态');return;}
     const latest = db.prepare('SELECT * FROM artifact_index WHERE project_id = ? AND relative_path = ? ORDER BY version DESC LIMIT 1')
       .get(project.id, artifact.relative_path);
     const body = await readJson(req, config.maxBodyBytes);
@@ -824,10 +877,10 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       payload: { artifactId: artifact.id, name: artifact.relative_path, version: artifact.version, sha256: artifact.sha256 },
     });
     emit(event);
-    sendJson(res, 200, { ok: true, data: { artifact: artifactView(db.prepare('SELECT * FROM artifact_index WHERE id = ?').get(artifact.id)) } });
+    sendJson(res, 200, { ok: true, data: { artifact: await presentArtifact(db.prepare('SELECT * FROM artifact_index WHERE id = ?').get(artifact.id)) } });
   });
 
-  route('GET', new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/artifacts/(?<aid>[\\w]+)/download$`), async ({ req, res, params }) => {
+  route('GET', new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/artifacts/(?<aid>[\\w]+)/download$`), async ({ req, res, params, url }) => {
     const session = requireSession(req, res);
     if (!session) return;
     const project = projectFor(db, session.tenantId, params.id);
@@ -841,10 +894,13 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       return;
     }
     try {
-      const bytes = await artifactBytes(artifact);
-      const name = artifact.relative_path.split('/').pop() || 'artifact';
+      let bytes = await artifactBytes(artifact);
+      let name = (await presentArtifact(artifact)).name;
+      const format=url.searchParams.get('format');
+      if(format){if(sha256(bytes)!==artifact.sha256)throw Object.assign(new Error('源文档版本校验失败'),{status:409});bytes=await exportDocument(bytes,name,format);name=name.replace(/\.[^.]+$/,'')+'.'+format;}
       res.writeHead(200, {
-        'content-type': /\.(md|markdown|txt)$/i.test(name) ? 'text/markdown; charset=utf-8' : 'application/octet-stream',
+        'content-type': exportTypes[format]||(/\.(md|markdown|txt)$/i.test(name) ? 'text/markdown; charset=utf-8' : 'application/octet-stream'),
+        'x-source-sha256':artifact.sha256,
         'content-length': bytes.length,
         'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`,
         'cache-control': 'no-store',
@@ -872,16 +928,13 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       connection: 'keep-alive',
       'x-accel-buffering': 'no',
     });
-    const backlog = db.prepare('SELECT * FROM project_events WHERE project_id = ? AND id > ? ORDER BY id').all(project.id, after);
-    for (const row of backlog) res.write(sseFrame(row));
-    const unsubscribe = subscribe(project.id, (event) => res.write(sseFrame(event)));
-    const ping = setInterval(() => res.write(': ping\n\n'), 15_000);
-    ping.unref?.();
-    const close = () => {
-      clearInterval(ping);
-      unsubscribe();
-      res.end();
-    };
+    res.flushHeaders?.();
+    let cursor=after,closed=false;
+    const flush=()=>{if(closed)return;const rows=db.prepare('SELECT * FROM project_events WHERE project_id=? AND id>? ORDER BY id LIMIT 256').all(project.id,cursor);for(const row of rows){cursor=row.id;if(['message_created','message_completed','message_stream'].includes(row.type)&&db.prepare('SELECT 1 FROM core_sessions WHERE operation_id=?').get(row.operation_id))continue;res.write(sseFrame(row));}};
+    const unsubscribe=subscribe(project.id,()=>flush());flush();
+    const poll=setInterval(flush,1000);poll.unref?.();
+    const ping=setInterval(()=>{if(!closed)res.write(': ping\n\n');},15000);ping.unref?.();
+    const close=()=>{if(closed)return;closed=true;clearInterval(ping);clearInterval(poll);unsubscribe();res.end();};
     req.on('close', close);
     res.on('error', close);
   });
@@ -917,12 +970,12 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
   function sseFrame(row) {
     const event = {
       id: row.id,
-      projectId: row.project_id,
+      projectId: row.project_id || row.projectId,
       type: row.type,
-      operationId: row.operation_id,
+      operationId: row.operation_id || row.operationId,
       revision: row.revision,
       at: row.at,
-      payload: row.payload_json ? JSON.parse(row.payload_json) : null,
+      payload: row.payload_json ? JSON.parse(row.payload_json) : row.payload ?? null,
     };
     return `id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`;
   }
@@ -932,8 +985,8 @@ const APP_ROOT = new URL('../../../apps/manager-web/', import.meta.url);
 
 /** Serve one whitelisted product frontend file. */
 function sendStatic(res, name) {
-  const file = new URL(name, APP_ROOT);
-  const types = { 'index.html': 'text/html; charset=utf-8', 'app.js': 'text/javascript; charset=utf-8', 'message-format.mjs': 'text/javascript; charset=utf-8', 'styles.css': 'text/css; charset=utf-8' };
+  const file = name==='customer-help.html'?new URL('../../../dsh-workbench/docs/manager-user-guide.html',import.meta.url):new URL(name, APP_ROOT);
+  const types = { 'index.html': 'text/html; charset=utf-8', 'customer-help.html': 'text/html; charset=utf-8', 'app.js': 'text/javascript; charset=utf-8', 'message-format.mjs': 'text/javascript; charset=utf-8', 'styles.css': 'text/css; charset=utf-8' };
   readFile(file)
     .then((bytes) => {
       res.writeHead(200, {
@@ -941,7 +994,7 @@ function sendStatic(res, name) {
         'content-length': bytes.length,
         'cache-control': 'no-store',
         'x-content-type-options': 'nosniff',
-        'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'",
+        'content-security-policy': name==='customer-help.html'?"default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'":"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'self'",
         'referrer-policy': 'no-referrer',
       });
       res.end(bytes);
@@ -970,7 +1023,7 @@ function sendInternalFailure(res, reason) {
 
 function projectView(row) {
   if (!row) return null;
-  return { id: row.id, name: row.name, status: row.status, createdAt: row.created_at, updatedAt: row.updated_at };
+  return { id: row.id, name: row.name, notes: row.notes || '', status: row.status, createdAt: row.created_at, updatedAt: row.updated_at };
 }
 
 function operationView(row) {
@@ -983,9 +1036,12 @@ function messageView(row) {
   const payload = row.payload_json ? JSON.parse(row.payload_json) : {};
   return {
     id: row.id,
-    role: row.type === 'message_created' ? 'user' : 'system',
+    role: row.type === 'manager_message'?(payload.role==='user'?'user':'system'):row.type === 'message_created' ? 'user' : 'system',
     kind: row.type,
-    text: ['message_created', 'message_completed'].includes(row.type) ? String(payload.text || '') : '已收到你的回答',
+    operationId:row.operation_id,
+    task:payload.task||null,
+    context:payload.context||null,
+    text: ['message_created', 'message_completed','manager_message'].includes(row.type) ? String(payload.text || '') : '已收到你的回答',
     at: row.at,
   };
 }

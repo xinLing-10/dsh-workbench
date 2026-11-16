@@ -1,7 +1,7 @@
 /** Docker tool boundary. The trusted controller and model gateway remain outside the container. */
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
-import {realpath,lstat} from 'node:fs/promises';
+import {realpath,lstat,mkdir} from 'node:fs/promises';
 import {resolve,join,sep} from 'node:path';
 import {randomUUID,createHash} from 'node:crypto';
 const exec=promisify(execFile);
@@ -21,9 +21,9 @@ export function createDockerSandbox({image,workspaceRoot,docker='docker',cpus=1,
  }
  async function run({projectId,command,signal}){
   if(typeof command!=='string'||!command.trim()||Buffer.byteLength(command)>4096)throw Error('Invalid bounded command');
-  signal?.throwIfAborted();const dir=await directory(projectId);await check();signal?.throwIfAborted();
+  signal?.throwIfAborted();const dir=await directory(projectId);const metadata=join(dir,'.dsh');await mkdir(metadata,{recursive:true});if((await lstat(metadata)).isSymbolicLink()||await realpath(metadata)!==metadata)throw Error('Symlink metadata refused');await check();signal?.throwIfAborted();
   const name='manager-isolated-'+randomUUID();live.add(name);
-  const args=['run','--rm','--pull=never','--name',name,'--label','manager.isolation=docker-v1','--label','manager.instance='+createHash('sha256').update(workspaceRoot).digest('hex'),'--network=none','--read-only','--user',uid+':'+gid,'--cap-drop=ALL','--security-opt=no-new-privileges','--cpus',String(cpus),'--memory',memoryMb+'m','--memory-swap',memoryMb+'m','--pids-limit',String(pids),'--ulimit','nofile=128:128','--tmpfs','/tmp:rw,nosuid,nodev,noexec,size=32m','--mount','type=bind,src='+dir+',dst=/workspace','--workdir','/workspace','--env','HOME=/tmp','--entrypoint','/bin/sh',image,'-c',command];
+  const args=['run','--rm','--pull=never','--name',name,'--label','manager.isolation=docker-v1','--label','manager.instance='+createHash('sha256').update(workspaceRoot).digest('hex'),'--network=none','--read-only','--user',uid+':'+gid,'--cap-drop=ALL','--security-opt=no-new-privileges','--cpus',String(cpus),'--memory',memoryMb+'m','--memory-swap',memoryMb+'m','--pids-limit',String(pids),'--ulimit','nofile=128:128','--tmpfs','/tmp:rw,nosuid,nodev,noexec,size=32m','--mount','type=bind,src='+dir+',dst=/workspace','--mount','type=bind,src='+metadata+',dst=/workspace/.dsh,readonly','--workdir','/workspace','--env','HOME=/tmp','--entrypoint','/bin/sh',image,'-c',command];
   const child=spawn(docker,args,{stdio:['ignore','pipe','pipe'],env:{PATH:process.env.PATH,DOCKER_HOST:process.env.DOCKER_HOST,DOCKER_CONTEXT:process.env.DOCKER_CONTEXT,HOME:process.env.HOME}});
   let output='',overflow=false,terminated=false;
   const stop=()=>{if(terminated)return;terminated=true;void exec(docker,['rm','-f',name],{timeout:10000}).catch(()=>{});child.kill('SIGTERM');};

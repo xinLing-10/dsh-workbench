@@ -1,0 +1,55 @@
+{
+  "date": "2026-11-15",
+  "scope": "local-standalone-fixture",
+  "productionDeployed": false,
+  "realModelCalls": 0,
+  "typecheck": "passed",
+  "productionBuild": "passed",
+  "formatCheck": "passed",
+  "clientTests": {
+    "passed": 4,
+    "failed": 0
+  },
+  "backendTests": {
+    "passed": 162,
+    "failed": 0,
+    "skipped": 2
+  },
+  "browser": {
+    "fixture": true,
+    "modelCalls": 0,
+    "checks": 28,
+    "passed": [
+      "App Router login preserves cookie session",
+      "SSE and fixture history are connected",
+      "light theme follows system preference",
+      "mobile conversation fits viewport",
+      "SSE reconnect never resends a message",
+      "question drafts survive navigation and old SSE closes",
+      "historical versions cannot be confirmed",
+      "disabled feature explains its condition",
+      "download endpoint preserves meaningful filename",
+      "new-project dialog focuses a form field",
+      "project notes persist through existing API",
+      "folder preview skips hidden secret files",
+      "upload requires explicit consent",
+      "sources modal fits mobile",
+      "learning only prepares editable draft",
+      "failed send keeps draft without automatic retry",
+      "explicit same-draft retry reuses request ID",
+      "idempotent replay does not duplicate user message",
+      "simulation permission-question-delivery chain completes",
+      "stop preserves next draft and unlocks composer",
+      "leaving project closes realtime subscription",
+      "admin page has five working sections",
+      "queue is rendered by project name",
+      "issued invite stays only in current result",
+      "switching section clears invite plaintext",
+      "customer help is same-origin offline manual",
+      "ordinary user admin API remains denied",
+      "other tenant project remains invisible"
+    ],
+    "screenshots": 9,
+    "consoleErrors": []
+  }
+}

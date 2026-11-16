@@ -13,6 +13,8 @@
 | 开发者、测试及部署维护人员 | [开发者与运维手册](dsh-workbench/docs/manager-developer-guide.md) | 架构入口、开发检查、模型与预算、管理操作、部署及恢复 |
 | 部署验收人员 | [服务器验收记录](deploy/service/acceptance-status.md) | 实际测试结果、观察状态、预算和未覆盖范围 |
 
+新增 [Next.js 独立前端](apps/manager-next/README.md)：迁移登录、项目、对话、成果、资料导入和管理控制台，复用原 API 与 Worker。已完成模型增量输出与线上灰度切换，详见[发布记录](deploy/service/next-rollout-status.md)；[分批进度](dsh-workbench/docs/next-migration-progress.md)。
+
 后续修改必须同步维护相应文档；客户主手册与离线版的更新原则见 [AGENTS.md](AGENTS.md)。
 
 ![工作台知识视图](dsh-workbench/docs/screenshot-knowledge.png)
@@ -146,3 +148,9 @@ npm test
 独立产品新增与客户界面同风格的 **可视化服务控制台**：平台管理员可查看概览、七天用量、三层额度、任务队列与 Worker 状态，执行原有额度调整及用量/执行核对，并查看管理审计。普通用户无访问权限；不提供服务器命令或密钥编辑。当前实现及新版图文说明见 [开发者与运维手册](dsh-workbench/docs/manager-developer-guide.md)。本批仅本地虚构验证，没有切换服务器验收版本。
 
 平台管理员现可在“服务管理 → 邀请码”可视化生成一次性邀请，选择独立/已有租户和有效期、复制本次明文并查看使用状态。沿用兑换开关，默认不自动开放注册；不自动分配模型额度或授予平台管理员。操作和限制见开发者手册的邀请码章节。本批仅本机虚构验证，服务器邀请保持关闭。
+
+最新版已部署为独立的定向试用实例，IP HTTPS入口、配额、证书续期和实际验证边界见 [首轮试用部署记录](deploy/service/trial-status.md)；后续服务器模型凭据配置见 [配置与轮换方案](deploy/service/model-credentials.md)。原24小时观察继续，不把定向试用当作已完成持续运行验收。
+
+本地后续开发：[业务闭环实现与高可用前置方案](dsh-workbench/docs/business-loop-progress.md)（尚未部署）。
+
+最新本地业务实现：[阶段执行、知识、交付与深度陪学补齐](dsh-workbench/docs/business-loop-completion.md)（未部署；高可用与真实模型验收边界见文档）。

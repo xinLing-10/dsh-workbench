@@ -13,3 +13,13 @@ test('real Docker boundary denies host secrets, sibling project, root writes and
  const result=await s.run({projectId:'prj_a',command:"id -u; test ! -e /workspace/../prj_b; test ! -e /workspace/../secret; test ! -e /var/run/docker.sock; if touch /root-proof 2>/dev/null; then exit 22; fi; node -e 'require(\"node:net\").connect({host:\"1.1.1.1\",port:443}).on(\"connect\",()=>process.exit(23)).on(\"error\",()=>process.exit(0));setTimeout(()=>process.exit(0),1000)'; printf isolation-ok"});assert.equal(result.code,0);assert.match(result.output,/1000/);assert.match(result.output,/isolation-ok/);
  const timeout=createDockerSandbox({image:process.env.MANAGER_ISOLATION_TEST_IMAGE,workspaceRoot:root,timeoutMs:1000});const ended=await timeout.run({projectId:'prj_a',command:'sleep 30'});assert.equal(ended.stopped,true);
 });
+
+// All cases below are offline; malformed/truncated tool content must never run.
+test('settled complete unusable replies terminate as failure; incomplete or unknown replies remain uncertain',async()=>{
+ for(const [record,expected] of [[{status:'needs_review',complete:true},'failed'],[{status:'needs_review',complete:false},'uncertain'],[{status:'unknown',complete:true},'uncertain']]){
+  let calls=0,runs=0,interactions=0;const runtime=createIsolatedRuntime({sandbox:{run:()=>runs++},model:'fixture',workspaceRoot:'/tmp'});
+  const result=await runtime.execute({job:{text:'fixture'},onControl:()=>{},client:{modelMessage:async()=>{calls++;return {record,wire:'data: {invalid truncated tool JSON'};},createInteraction:()=>interactions++}});
+  assert.equal(result.status,expected);assert.equal(calls,1);assert.equal(runs,0);assert.equal(interactions,0);if(expected==='failed')assert.equal(result.reason.kind,'failed');
+ }
+});
+test('sandbox mounts manager metadata read-only and rejects a substituted metadata symlink',async t=>{const {chmod}=await import('node:fs/promises');const root=await mkdtemp(join(tmpdir(),'metadata-boundary-'));t.after(()=>rm(root,{recursive:true,force:true}));await mkdir(join(root,'prj_a'));await mkdir(join(root,'prj_b'));const docker=join(root,'fake-docker'),log=join(root,'arguments.json');await writeFile(docker,'#!/usr/bin/env node\nconst fs=require("node:fs");if(process.argv[2]==="run")fs.writeFileSync('+JSON.stringify(log)+',JSON.stringify(process.argv.slice(2)));');await chmod(docker,0o700);const sandbox=createDockerSandbox({image:pinned,workspaceRoot:root,docker});await sandbox.run({projectId:'prj_a',command:'true'});const args=JSON.parse(await readFile(log,'utf8'));assert.ok(args.some(a=>a.endsWith('dst=/workspace/.dsh,readonly')));await symlink(join(root,'prj_a','.dsh'),join(root,'prj_b','.dsh'));await assert.rejects(()=>sandbox.run({projectId:'prj_b',command:'true'}),/Symlink metadata/);});

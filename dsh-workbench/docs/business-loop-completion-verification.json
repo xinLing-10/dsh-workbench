@@ -1,0 +1,76 @@
+{
+  "scope": "local business-loop completion; not deployed",
+  "serverOperations": false,
+  "realModelCalls": 0,
+  "gitPush": false,
+  "schema": 13,
+  "tests": {
+    "apiWorkerContracts": {
+      "total": 201,
+      "passed": 199,
+      "failed": 0,
+      "skipped": 2
+    },
+    "plugin": {
+      "total": 203,
+      "passed": 203,
+      "failed": 0
+    },
+    "nextClient": {
+      "total": 5,
+      "passed": 5,
+      "failed": 0
+    },
+    "totalPassed": 407
+  },
+  "screenshots": [
+    {
+      "path": "workflow-completion.png",
+      "sha256": "a778e44b926ed25ac312781731a9a36c3977a45038b09e6a6d6f946dd4800835",
+      "fixture": true
+    },
+    {
+      "path": "learning-completion.png",
+      "sha256": "e1c56fc97d42855e4ee103659d5f3dd87561df470ef34250db252fb34df546e1",
+      "fixture": true
+    },
+    {
+      "path": "delivery-templates-completion.png",
+      "sha256": "f8e8d15a3c33f03d194117b7f7b455d60d990dbede8dc94ca4fa46090cbdb692",
+      "fixture": true
+    }
+  ],
+  "browserChecks": [
+    "stage progress and execution entry visible",
+    "learning-source selection uses friendly task-scoped name",
+    "shared lesson and learning copy/review entries visible",
+    "template formats and approved-source prerequisite toast checked",
+    "validation failure returns button to usable state"
+  ],
+  "verificationLimits": [
+    "no real model calls or server rollout",
+    "Docker arguments verified with fake CLI; actual image test skipped",
+    "production Webpack compilation in isolated temporary copy; symlink output tracing warnings are not deployment package acceptance",
+    "not distributed high availability or active Worker crash validation"
+  ],
+  "remaining": [
+    "real model and actual sandbox/active task recovery acceptance after server work is authorized again",
+    "shared database, multi-host coordination and object storage before multi-API rollout",
+    "custom uploaded template UI remains in original plugin"
+  ],
+  "guides": {
+    "customerEmbeddedImages": 45,
+    "customerSections": 18,
+    "adminEmbeddedImages": 10,
+    "adminSections": 13
+  },
+  "checks": {
+    "typescript": true,
+    "nextProductionCompile": "passed in temporary copy; output-tracing warnings remain",
+    "frontendFormat": true,
+    "gitDiffWhitespace": true,
+    "longDocumentReceipt": "passed; full source >60KB and follow-up extract bounded",
+    "sourceRemoval": "passed; old upload content absent from newly materialized reference",
+    "legacyLearningAdoption": "passed; old plan mutation lanes rejected after upgrade"
+  }
+}
