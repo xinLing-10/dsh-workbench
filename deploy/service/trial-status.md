@@ -110,3 +110,17 @@ IP HTTPS及短期证书维护依据：[Let’s Encrypt 官方说明](https://let
 ## 2026-11-15 Next.js与模型流式发布
 
 默认试用入口于UTC08:50:25切换Next，保留旧页面选择和原API/Worker/预算/凭据。API先核对无活动、排队和未结用量，备份再切换5文件补丁；16条既有模型记录摘要前后一致。新进程回环8120，原业务API8110；独立私有验收不重启或修改。发布、产物摘要、完整验证、独立真实1次/157 token测试及回退见 [Next发布记录](next-rollout-status.md)。试用50m与原200k实验账本保持独立，新增测试不使用五位账号。
+
+## 2026-11-17 业务闭环正式发布与管理员开户
+
+来源提交 `269cdeb`，API 与五个 Worker 的 current 指向 `/srv/manager-trial/releases/business-loop-20261117`，Next 指向 `/srv/manager-trial/next-releases/business-loop-20261117`。API 发布包 SHA-256 `6447f8066ac2434fcd6e1e23b3682896779075550d3f756d33ab5b14f554af24`；281 个源码文件与 2107 个 Next 产物逐文件校验。Next 在服务器独立回环预览通过后才切换。模型凭据、5000万累计授权、个人/项目额度与原应用配置均未调整。
+
+入口暂停提交后再次确认活动池执行、排队操作与未结调用均0，再停止试用进程；旧API因SSE长连接等待约90秒停止界限后退出，属于空闲维护停止，不是活动任务恢复验证。备份控制库 `private/before-business-loop-20261117.sqlite`、工作区 `private/workspaces-before-business-loop-20261117.tar.gz`，代理和旧链接路径亦保存于本实例 private。启动后 schema_meta=13，API、Next 和五个 Worker 均 active，Docker 隔离能力已就绪。原22条模型账本逐行摘要切换前后相同；历史已隔离 uncertain 记录保留。未请求模型、未重放客户任务。
+
+独立平台管理员已通过运维开户与审计授予权限，独立租户初始额度为0，没有分配Worker或修改五位客户权限。账户及密码仅保存在服务器和维护者本机0600私有文件中，不写入仓库。验证真实密码登录、授予前管理接口403、授予后身份与管理/邀请接口200，验证会话已退出。公网可信HTTPS登录与帮助页200，未登录管理接口401；管理HTML外壳可返回200，管理数据始终受API鉴权。
+
+回退：先暂停提交并核对活动执行/未结用量，停止试用API/Next及空闲Worker；从 `private/release.before-business-loop-20261117` 和 `private/next.before-business-loop-20261117` 恢复链接后启动，代理使用 `private/nginx.before-business-loop-20261117.conf`。保留升级后的数据库与所有新增记录；如需还原备份，先单独核对停机后的新增数据，不能覆盖新消息或清空用量。
+
+本次是部署与无模型冒烟检查，不代表新版业务流程的真实模型、活动故障恢复或容量验收。维持定向试用，不扩大服务规模。
+
+补充校验：安装 `fonts-arphic-uming`，以服务用户对虚构文本成功导出 DOCX / 中文 PDF / PPTX，分别3270 / 8848 / 53443字节，并校验文件容器标记；这不是复杂文档版式验收。新管理员通过公网 HTTPS 完成登录、身份、服务及邀请接口和管理页面检查，随后退出测试会话。发布后仅同步手册与发布记录，原发布包清单对应初始源码，后续文档哈希单独记录于 `private/business-loop-docs-20261117.json`。
