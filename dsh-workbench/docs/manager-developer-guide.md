@@ -296,3 +296,17 @@ App Router 提供登录、项目列表、项目对话和管理员路由；共享
 实现、接口和本地验证详见[业务闭环补齐说明](business-loop-completion.md)。本批没有真实模型调用、远程部署、Git 推送或凭据操作。此前 schema 12 及未贯通列表属于上一批范围，以新专题为准。
 
 部署补记（2026-11-17）：上述本地业务闭环版本现已发布到独立试用服务，schema13、Next生产产物及五个Worker同步加载；新增独立管理员账号，沿用统一登录和平台权限校验。逐文件校验、备份、回退路径、无模型冒烟边界见[试用状态](../../deploy/service/trial-status.md)。模型授权与额度未修改。中文PDF依赖系统字体，Ubuntu使用 `fonts-arphic-uming` 的 `/usr/share/fonts/truetype/arphic/uming.ttc`；字体之外仍需根据实际成果检查导出内容。历史文中的“本地/未部署”描述保留对应批次上下文，以此发布补记为准。
+
+## 第二轮本地改进：配置与接口
+
+完整说明见[第二轮实现记录](manager-round-two-implementation.md)。`POST /api/v1/projects/:id/sources/import-workspace` 接收 `{consent:true,files:[{path,sha256}]}`，只读取当前项目已校验的文字资料。要求会话、Origin、CSRF和项目归属；活动/排队/不确定任务会阻止导入。同步事务区间创建暂存目录后整体重命名到 `imported-project`，不覆盖已修改副本；重复相同快照可核对后重用。首次导入与后续记录之间意外断开时可重试原快照，不重发模型任务。
+
+Worker可信0600配置新增 `"network":{"enabled":true}`。默认关闭，启用前核对服务环境及权限，按安全维护流程逐个加载；本轮没有修改服务器配置。受控联网运行于Worker的无凭据代理模块，不挂入工具容器；Docker继续 `--network=none`。只支持公网HTTPS/443，逐跳检查域名和所有DNS地址并固定连接IP，拒绝内网、云元数据及保留地址；不传浏览器Cookie、账户授权或自定义认证头。最多3次跳转，15秒超时，网页512KiB/正文16000字符，每个执行最多6次网络操作。
+
+`read_public_web`提供可追溯文本，`search_public_web`使用公开Bing RSS结果（未读不登记来源），`download_project_dependency`要求固定npm/Python文件源URL和SHA-256或npm SHA-512 integrity，只保存校验文件。网页信息均是不可信数据；不能用网页里的指令改变操作权限。依赖递归解析、任意联网shell、私有仓库登录、代理认证和包安装服务未实现。网络出口和目标站点限制仍会影响可用性。
+
+Worker v1的completed回执增加可选sources（最多6项：url/title/sha256/fetchedAt），兼容没有来源的旧回执；统一签名、序列和持久化规则不变。正式API将其保存到项目事件，前端在回答后展示。共享阶段文档追加实际读取来源，管家消息从同一任务board的执行来源投影，不跨项目/任务读取；共享消息注明本任务参考资料，不把历史来源声称为每句结论的直接证据。陪学只保留提问和公开只读检索工具声明，命令/依赖下载许可继续拒绝。
+
+需求策略共享内核为 `dsh-workbench/core/requirements-policy.js`，Worker通过生成的本地契约副本使用，原插件需求分析preset同步规则。修改策略后运行 `node services/worker-bridge/scripts/sync-contracts.mjs`，不要手改生成文件。用户对话、工具授权、文档确认继续分开；没有通过真实模型验收前，不宣称每次都会输出完美需求方案。
+
+共享流程新增 `answer-batch` 动作：`answers:[{questionId,text}]`，一次回答最新一组关键问题，沿用revision/requestId围栏；不把答案当作阶段执行授权。`manager_message`投影clarification标记，网页按当前任务读取同一份共享状态并生成选项/补充表单。

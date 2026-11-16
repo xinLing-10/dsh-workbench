@@ -51,7 +51,7 @@ export function acceptWorkerEvent(db,claims,event,append) {
    const cards=db.prepare("SELECT id FROM interaction_requests WHERE operation_id=? AND state='pending'").all(run.operation_id);
    db.prepare("UPDATE interaction_requests SET state='cancelled' WHERE operation_id=? AND state='pending'").run(run.operation_id);
    for(const c of cards)events.push(append(db,{tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,type:'interaction_cancelled',payload:{interactionId:c.id}}));
-   if(state==='completed')events.push(append(db,{tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,type:'message_completed',payload:{text:learningCompletion(db,run,event),scope:'worker-protocol-v1',engineReceipt:true}}));
+   if(state==='completed')events.push(append(db,{tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,type:'message_completed',payload:{text:learningCompletion(db,run,event),scope:'worker-protocol-v1',engineReceipt:true,...(event.sources?.length?{sources:event.sources}:{})}}));
   }
   if(event.type!=='heartbeat')events.push(append(db,{tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,type:'task_status',payload:{state,workerProtocol:true,sequence:event.sequence,engineReceipt:WORKER_TERMINAL.includes(state)}}));
   db.exec('COMMIT');

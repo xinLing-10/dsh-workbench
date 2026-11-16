@@ -8,10 +8,14 @@ export function SourcesDialog({
   projectId,
   onClose,
   onLearn,
+  purpose = "learning",
+  onModify,
 }: {
   projectId: string;
   onClose: () => void;
   onLearn: (hasSources: boolean) => void;
+  purpose?: "learning" | "modify";
+  onModify?: () => void;
 }) {
   const previewEpoch = useRef(0);
   useEffect(
@@ -25,6 +29,8 @@ export function SourcesDialog({
     [candidates, setCandidates] = useState<SourceCandidate[]>([]),
     [selected, setSelected] = useState<Set<string>>(new Set()),
     [consent, setConsent] = useState(false),
+    [editable, setEditable] = useState(false),
+    [imported, setImported] = useState(false),
     [busy, setBusy] = useState(false),
     [message, setMessage] = useState("");
   async function load() {
@@ -97,6 +103,7 @@ export function SourcesDialog({
         count++;
       }
       setCandidates([]);
+      setImported(false);
       setConsent(false);
       setMessage(`已上传 ${count} 份只读资料，尚未调用模型。`);
     } catch (e) {
@@ -113,7 +120,11 @@ export function SourcesDialog({
     }
   }
   return (
-    <Modal title="项目资料与学习" onClose={onClose} busy={busy}>
+    <Modal
+      title={purpose === "modify" ? "选择要修改的已有项目" : "项目资料与学习"}
+      onClose={onClose}
+      busy={busy}
+    >
       <p className="muted">
         选择已有项目的文字资料，管家才能根据文件讲解。仅上传你勾选并授权的只读副本，不会运行本地项目。
       </p>
@@ -221,12 +232,57 @@ export function SourcesDialog({
           尚未关联资料。你也可以先让管家询问需要哪些文件。
         </p>
       )}
+      {purpose === "modify" && files.length > 0 && (
+        <div className="import-workspace">
+          <p>
+            如需实际修改，将以上已上传文件复制到服务器的独立工作区
+            imported-project。保留原目录层级，不修改你电脑中的原项目；这是筛选后的文字文件副本，可能缺少依赖和二进制资源。
+          </p>
+          <label className="question-option">
+            <input
+              type="checkbox"
+              checked={editable}
+              onChange={(e) => setEditable(e.target.checked)}
+            />
+            我授权创建可修改的服务器项目副本
+          </label>
+          <button
+            disabled={busy || !editable || imported}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await api(
+                  "POST",
+                  `/api/v1/projects/${projectId}/sources/import-workspace`,
+                  {
+                    consent: editable,
+                    files: files.map((f) => ({
+                      path: f.path,
+                      sha256: f.sha256,
+                    })),
+                  },
+                );
+                setImported(true);
+                setMessage("已导入可修改副本；尚未执行代码或调用模型。");
+              } catch (e) {
+                setMessage(errorText(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {imported ? "副本已导入" : "导入为可修改副本"}
+          </button>
+        </div>
+      )}
       <button
         className="primary"
         disabled={busy}
-        onClick={() => onLearn(files.length > 0)}
+        onClick={() =>
+          purpose === "modify" ? onModify?.() : onLearn(files.length > 0)
+        }
       >
-        带我学懂这个项目
+        {purpose === "modify" ? "继续描述修改需求" : "带我学懂这个项目"}
       </button>
       <small>只准备可编辑的提问草稿，点击发送后才调用模型。</small>
     </Modal>

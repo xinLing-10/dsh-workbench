@@ -9,6 +9,7 @@ export type ProjectStreamEvent = {
 const types = [
   "message_created",
   "manager_message",
+  "project_imported",
   "message_completed",
   "interaction_created",
   "interaction_answered",

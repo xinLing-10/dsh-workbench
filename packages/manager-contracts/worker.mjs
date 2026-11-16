@@ -9,9 +9,16 @@ export function validateJob(job) {
   return job;
 }
 export function validateWorkerEvent(event) {
-  const fields=['protocolVersion','engineId','eventId','sequence','type','text','endReason','artifactIds'];
+  const fields=['protocolVersion','engineId','eventId','sequence','type','text','endReason','artifactIds','sources'];
   if(!event || Object.keys(event).some(k=>!fields.includes(k)) || event.protocolVersion!==1 || !id(event.engineId) || !id(event.eventId) || !Number.isSafeInteger(event.sequence) || event.sequence<1 || !WORKER_EVENT_TYPES.includes(event.type))throw new Error('Invalid worker event');
   if(event.text!==undefined && (typeof event.text!=='string' || event.text.length>16000))throw new Error('Worker text too large');
+  if(event.sources!==undefined){
+    if(event.type!=='completed'||!Array.isArray(event.sources)||event.sources.length>6)throw new Error('Invalid source receipt');
+    for(const source of event.sources){
+      if(!source||Object.keys(source).some(k=>!['url','title','sha256','fetchedAt'].includes(k))||typeof source.title!=='string'||source.title.length>200||typeof source.url!=='string'||source.url.length>2048||!/^https:\/\//.test(source.url)||!/^([a-f0-9]{64})$/.test(source.sha256||'')||!Number.isFinite(Date.parse(source.fetchedAt)))throw new Error('Invalid source receipt');
+      const url=new URL(source.url);if(url.username||url.password||/[\x00-\x20]/.test(source.url))throw new Error('Invalid source URL');
+    }
+  }
   if(WORKER_TERMINAL.includes(event.type)) {
     const expected={completed:'completed',cancelled:'aborted',failed:'failed'}[event.type];
     if(event.endReason!==expected)throw new Error('Missing engine terminal receipt');

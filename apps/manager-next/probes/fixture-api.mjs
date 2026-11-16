@@ -1,6 +1,6 @@
 /** Isolated disposable local fixture. No credentials, real users, model or shell execution. */
 import { createServer } from "node:http";
-import { mkdtemp, mkdir } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -46,6 +46,8 @@ await redeemInvite(db, {
 for (const [id, name, t] of [
   ["prj_next", "虚构演示 · 小店预约", tenant.id],
   ["prj_next_question", "虚构演示 · 多题问答", tenant.id],
+  ["prj_next_permission", "虚构演示 · 操作授权", tenant.id],
+  ["prj_next_core", "虚构演示 · 深度澄清", tenant.id],
   ["prj_next_other", "虚构独立客户项目", other.id],
 ])
   db.prepare(
@@ -62,7 +64,22 @@ for (const [type, text] of [
     tenantId: tenant.id,
     projectId: "prj_next",
     type,
-    payload: { text, fixture: true },
+    payload: {
+      text,
+      fixture: true,
+      ...(type === "message_completed"
+        ? {
+            sources: [
+              {
+                title: "虚构参考来源（未真实抓取）",
+                url: "https://example.com/guide",
+                sha256: "a".repeat(64),
+                fetchedAt: at,
+              },
+            ],
+          }
+        : {}),
+    },
   });
 for (const version of [1, 2]) {
   const bytes = Buffer.from(
@@ -105,6 +122,17 @@ db.prepare(
   new Date(Date.now() + 3600000).toISOString(),
   JSON.stringify(qs),
 );
+db.prepare(
+  "INSERT INTO interaction_requests(id,tenant_id,project_id,kind,prompt,state,created_at,expires_at,scope) VALUES(?,?,?,'permission',?,'pending',?,?,?)",
+).run(
+  "int_next_permission",
+  tenant.id,
+  "prj_next_permission",
+  "虚构授权演示：是否允许读取指定公开网页？不会真的联网或执行命令。",
+  at,
+  new Date(Date.now() + 3600000).toISOString(),
+  "read_public_web",
+);
 const budget = createServiceBudget({ db });
 for (const [scope, scopeId, limit] of [
   ["global", "*", 200000],
@@ -121,24 +149,107 @@ for (const [scope, scopeId, limit] of [
   });
 const workspaceRoot = join(dir, "workspaces");
 await mkdir(workspaceRoot);
+for (const id of [
+  "prj_next",
+  "prj_next_question",
+  "prj_next_permission",
+  "prj_next_core",
+])
+  await mkdir(join(workspaceRoot, id));
 const config = {
-  port: 8106,
+  port: Number(process.env.FIXTURE_API_PORT || 8106),
   simulate: true,
   simulationFlow: true,
   previewFixture: true,
   allowRedeem: true,
   maxBodyBytes: 65536,
-  publicOrigin: "http://localhost:3100",
+  publicOrigin: process.env.FIXTURE_PUBLIC_ORIGIN || "http://localhost:3100",
   workspaceRoot,
   sessionTtlMs: 86400000,
 };
-const app = createApp({ db, config, bridge: createBridge({ config }) }),
+const app = createApp({
+    db,
+    config,
+    bridge: createBridge({ config }),
+    managerRuntime: {
+      adapter: {
+        create: async () => "fixture_session",
+        submit: async () => {},
+        read: async () => ({ terminal: false }),
+        cancel: async () => {},
+      },
+    },
+  }),
   dispatcher = createDispatcher({
     db,
     enabled: true,
     interactive: true,
     publish: app.publish,
   });
+const coreTask = { id: "tsk_next_core", title: "虚构需求澄清", kind: "work" };
+db.prepare("INSERT INTO business_tasks VALUES(?,?,?,?,?,?)").run(
+  coreTask.id,
+  tenant.id,
+  "prj_next_core",
+  coreTask.title,
+  coreTask.kind,
+  at,
+);
+const scoped = {
+  ...db.prepare("SELECT * FROM projects WHERE id=?").get("prj_next_core"),
+  board_id: coreTask.id,
+};
+await app.managerCore.view(scoped);
+await app.managerCore.mutate(scoped, {
+  action: "configure",
+  mode: "requirements",
+  goal: "虚构预约想法",
+  revision: 0,
+  requestId: "fixture-core-configure",
+});
+const managerFile = join(
+    workspaceRoot,
+    "prj_next_core",
+    ".dsh/workbench/changes",
+    coreTask.id,
+    "manager.json",
+  ),
+  manager = JSON.parse(await readFile(managerFile, "utf8"));
+manager.messages.push({
+  id: "fixture-core-questions",
+  role: "assistant",
+  text: "虚构深度流程：先给出预约方案，只确认两个关键选择，未调用模型。",
+  time: at,
+  blocks: [
+    { type: "summary", text: "虚构深度流程：预约方案草案，未调用模型。" },
+    {
+      type: "question",
+      id: "core_audience",
+      stage: "spec",
+      text: "谁先使用？",
+      options: ["店主（推荐）", "顾客"],
+    },
+    {
+      type: "question",
+      id: "core_scope",
+      stage: "spec",
+      text: "先做什么？",
+      options: ["只做预约（推荐）", "预约和支付"],
+    },
+  ],
+});
+await writeFile(managerFile, JSON.stringify(manager));
+appendEvent(db, {
+  tenantId: tenant.id,
+  projectId: "prj_next_core",
+  type: "manager_message",
+  payload: {
+    text: "虚构深度流程：预约方案草案，未调用模型。下面可以一次确认关键选择。",
+    role: "assistant",
+    clarification: true,
+    task: coreTask,
+  },
+});
 let pending = Promise.resolve();
 const timer = setInterval(() => {
   pending = pending.then(() => dispatcher.tick()).catch(() => {});
@@ -188,7 +299,22 @@ const server = createServer((q, r) => {
             projectId: "prj_next",
             operationId: op,
             type: "message_completed",
-            payload: { text, fixture: true },
+            payload: {
+              text,
+              fixture: true,
+              ...(type === "message_completed"
+                ? {
+                    sources: [
+                      {
+                        title: "虚构参考来源（未真实抓取）",
+                        url: "https://example.com/guide",
+                        sha256: "a".repeat(64),
+                        fetchedAt: at,
+                      },
+                    ],
+                  }
+                : {}),
+            },
           }),
         );
       }
@@ -216,12 +342,12 @@ const server = createServer((q, r) => {
   }
   void app.handle(q, r);
 });
-server.listen(8106, "127.0.0.1", () =>
+server.listen(config.port, "127.0.0.1", () =>
   console.log(
     JSON.stringify({
       fixture: true,
       url: config.publicOrigin,
-      apiPort: 8106,
+      apiPort: config.port,
       modelCalls: 0,
       directory: dir,
     }),

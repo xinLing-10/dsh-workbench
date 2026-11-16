@@ -508,6 +508,66 @@ pre {
   outline-offset: 0;
   font-size: 14px;
 }
+.resizable-input {
+  width: 100%;
+  min-width: 0;
+}
+.composer .resizable-input textarea {
+  display: block;
+  width: 100%;
+  min-height: 80px;
+  overflow-y: auto;
+  resize: none;
+}
+.input-resize-handle {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  cursor: ns-resize;
+  touch-action: none;
+  user-select: none;
+  color: var(--muted, #777);
+  border-radius: 6px;
+}
+.input-resize-handle:hover,
+.input-resize-handle:focus-visible {
+  background: #8580a118;
+  outline: 2px solid #aaa2d0;
+}
+.input-resize-handle small {
+  font-size: 11px;
+}
+.authorization-composer {
+  max-height: 45dvh;
+  overflow-y: auto;
+}
+.authorization-composer .interaction {
+  margin: 0;
+  border: 0;
+  padding: 4px;
+  background: transparent;
+}
+.interaction-prompt {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.import-workspace {
+  border: 1px solid #aaa4c6;
+  padding: 12px;
+  border-radius: 10px;
+  margin: 12px 0;
+}
+.message-sources {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid #8883;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .composer-actions {
   display: flex;
   align-items: center;

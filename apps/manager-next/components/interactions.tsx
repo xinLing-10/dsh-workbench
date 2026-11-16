@@ -7,10 +7,12 @@ export function InteractionCard({
   interaction,
   projectId,
   onRefresh,
+  composer = false,
 }: {
   interaction: Interaction;
   projectId: string;
   onRefresh: () => Promise<void>;
+  composer?: boolean;
 }) {
   const { api, notice, questionDrafts, setQuestionDraft, clearQuestionDraft } =
       useWorkspace(),
@@ -39,7 +41,18 @@ export function InteractionCard({
     );
     return () => clearTimeout(t);
   }, [interaction.expiresAt, interaction.id, clearQuestionDraft]);
-  if (expired) return null;
+  if (expired)
+    return (
+      <p role="status">
+        本次请求已过期，请刷新项目核对最新状态。
+        <button
+          type="button"
+          onClick={() => void onRefresh().catch((e) => notice(errorText(e)))}
+        >
+          刷新状态
+        </button>
+      </p>
+    );
   const questions = interaction.questions?.length
     ? interaction.questions
     : [{ id: "legacy", question: interaction.prompt, options: [] }];
@@ -69,17 +82,22 @@ export function InteractionCard({
       <span className="eyebrow">
         {interaction.kind === "permission" ? "需要你的许可" : "需要你回答"}
       </span>
-      <h3>{interaction.prompt}</h3>
+      <h3 className="interaction-prompt">{interaction.prompt}</h3>
       {interaction.kind === "permission" ? (
         <div className="row">
           <button
+            type="button"
             className="primary"
             disabled={busy}
             onClick={() => void respond("allow")}
           >
-            允许一次
+            {busy ? "正在提交…" : composer ? "允许授权" : "允许一次"}
           </button>
-          <button disabled={busy} onClick={() => void respond("deny")}>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void respond("deny")}
+          >
             拒绝
           </button>
         </div>
@@ -106,7 +124,7 @@ export function InteractionCard({
           {questions.map((q) => {
             const saved = answers[q.id] || { selected: [], custom: "" };
             return (
-              <fieldset key={q.id}>
+              <fieldset key={q.id} disabled={busy}>
                 <legend>{q.question}</legend>
                 {q.detail && <p>{q.detail}</p>}
                 {q.options?.map((option) => (
@@ -155,7 +173,7 @@ export function InteractionCard({
             );
           })}
           <button className="primary" disabled={busy}>
-            提交全部回答
+            {busy ? "正在提交…" : "提交全部回答"}
           </button>
         </form>
       )}

@@ -1,3 +1,4 @@
+import {importProjectFiles} from './project-import.mjs';
 import {boardDirectory,managedPath} from '../../../dsh-workbench/core/artifacts.js';
 import {createCoreWorkerRuntime} from './core-worker-runtime.mjs';
 import {createMessageStream,streamMessages} from './message-stream.mjs';
@@ -151,7 +152,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     serviceBudget.expireHolds();
     const controller=new AbortController();const abort=()=>{if(!res.writableEnded)controller.abort();};res.on('close',abort);
     const stream=createMessageStream({db,run,requestId:body.id,append:appendEvent,publish:emit,authorize:()=>requireExecution(db,claims)});
-    try{const coreJob=db.prepare('SELECT kind FROM core_sessions WHERE operation_id=?').get(claims.operationId);const learningOnly=coreJob?coreJob.kind!=='work':operationTask(db,claims.operationId)?.kind==='learning';const modelBody=learningOnly?Object.fromEntries(Object.entries(body.body||{}).filter(([key])=>!['tools','tool_choice'].includes(key))):body.body;const data=await modelGateway.message({operationId:claims.operationId,id:body.id,body:modelBody,onText:delta=>stream.text(delta),signal:controller.signal,authorizeDispatch:()=>requireExecution(db,claims)});if(!res.destroyed)sendJson(res,200,{ok:true,data});}finally{try{stream.close();}finally{res.off('close',abort);}}
+    try{const coreJob=db.prepare('SELECT kind FROM core_sessions WHERE operation_id=?').get(claims.operationId);const learningOnly=coreJob?coreJob.kind!=='work':operationTask(db,claims.operationId)?.kind==='learning';const readTools=(body.body?.tools||[]).filter(t=>['read_public_web','search_public_web','ask_user_question'].includes(t.name));const modelBody=learningOnly?{...Object.fromEntries(Object.entries(body.body||{}).filter(([key])=>!['tools','tool_choice'].includes(key))),...(readTools.length?{tools:readTools,tool_choice:{type:'auto'}}:{})}:body.body;const data=await modelGateway.message({operationId:claims.operationId,id:body.id,body:modelBody,onText:delta=>stream.text(delta),signal:controller.signal,authorizeDispatch:()=>requireExecution(db,claims)});if(!res.destroyed)sendJson(res,200,{ok:true,data});}finally{try{stream.close();}finally{res.off('close',abort);}}
   });
 
   // requireSession enforces authentication, Origin AND CSRF for every POST.
@@ -291,6 +292,13 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     if(method==='POST'){const body=await readJson(req,config.maxBodyBytes);saveSources(db,project.id,body.files);}
     if(method==='DELETE'){const body=await readJson(req,config.maxBodyBytes);if(typeof body.path!=='string'){sendError(res,400,ERROR_CODES.validation,'请选择要移除的资料');return;}db.prepare('DELETE FROM project_sources WHERE project_id=? AND path=?').run(project.id,body.path);}
     sendJson(res,200,{ok:true,data:{files:sourceList(db,project.id),limits:{files:50,fileBytes:32768,totalBytes:524288,contextChars:12000}}});
+  });
+  route('POST',new RegExp(`^${API_PREFIX}/projects/(?<id>[\\w]+)/sources/import-workspace$`),async({req,res,params})=>{
+    const session=requireSession(req,res);if(!session)return;const project=projectFor(db,session.tenantId,params.id);if(!project){sendError(res,404,ERROR_CODES.not_found,'项目不存在');return;}
+    const body=await readJson(req,config.maxBodyBytes),directory=await workspace.projectDir(project.id);
+    const result=importProjectFiles({db,projectId:project.id,directory,files:body.files,consent:body.consent});
+    emit(appendEvent(db,{tenantId:project.tenant_id,projectId:project.id,type:'project_imported',payload:{directory:result.directory,files:result.files}}));
+    sendJson(res,200,{ok:true,data:result});
   });
   route('GET', /^\/help$/,({res})=>sendStatic(res,'customer-help.html'));
 
@@ -624,7 +632,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
       return;
     }
     const kind = body.kind === 'permission' ? 'permission' : body.kind === 'question' ? 'question' : '';
-    if(kind==='permission'&&(operationTask(db,claims.operationId)?.kind==='learning'||db.prepare("SELECT 1 FROM core_sessions WHERE operation_id=? AND kind!='work'").get(claims.operationId))){sendError(res,403,ERROR_CODES.forbidden,'陪学模式禁止执行命令');return;}
+    if(kind==='permission'&&!['read_public_web','search_public_web'].includes(body.scope)&&(operationTask(db,claims.operationId)?.kind==='learning'||db.prepare("SELECT 1 FROM core_sessions WHERE operation_id=? AND kind!='work'").get(claims.operationId))){sendError(res,403,ERROR_CODES.forbidden,'陪学模式禁止执行命令');return;}
     const prompt = typeof body.prompt === 'string' ? body.prompt.trim().slice(0, 4000) : '';
     if (kind === '' || prompt === '') {
       sendError(res, 400, ERROR_CODES.validation, '需要 kind（question|permission）与 prompt');
@@ -1041,6 +1049,8 @@ function messageView(row) {
     operationId:row.operation_id,
     task:payload.task||null,
     context:payload.context||null,
+    sources:payload.sources||[],
+    clarification:payload.clarification===true,
     text: ['message_created', 'message_completed','manager_message'].includes(row.type) ? String(payload.text || '') : '已收到你的回答',
     at: row.at,
   };

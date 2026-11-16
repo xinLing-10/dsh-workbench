@@ -38,7 +38,7 @@ export function createWorkerRunner({directory,workerId,tenantId,productApiUrl,se
     if(record.stopRequested && result.status==='completed'){record.state='uncertain';await save(record);return;}
     const expected={completed:'completed',cancelled:'aborted',failed:'failed'}[result.status];
     if(result.reason?.kind!==expected){record.state='uncertain';await save(record);return;}
-    await event(record,result.status,{endReason:expected,artifactIds,text:String(result.text || '').slice(0,16000)});
+    await event(record,result.status,{endReason:expected,artifactIds,text:String(result.text || '').slice(0,16000),...(result.status==='completed'&&result.sources?.length?{sources:result.sources}:{})});
    }catch{clearInterval(timer);await serial(job,async()=>{if(!WORKER_TERMINAL.includes(record.state))record.state='uncertain';await save(record);});}
    finally{clearInterval(timer);clearTimeout(deadlineTimer);active.delete(job.engineId);}
   })();

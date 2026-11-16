@@ -154,3 +154,5 @@ npm test
 本地后续开发：[业务闭环实现与高可用前置方案](dsh-workbench/docs/business-loop-progress.md)（尚未部署）。
 
 最新本地业务实现：[阶段执行、知识、交付与深度陪学补齐](dsh-workbench/docs/business-loop-completion.md)（未部署；高可用与真实模型验收边界见文档）。
+
+第二轮本地改进：退出登录、项目切换、已有项目导入、选项澄清、输入区授权、可调整输入区及受控联网来源，详见[实现与验证记录](dsh-workbench/docs/manager-round-two-implementation.md)。尚未部署；客户操作、管理员边界和运维配置分别见三类手册。

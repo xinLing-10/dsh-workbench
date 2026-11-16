@@ -73,6 +73,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [],
   );
   const [create, setCreate] = useState(false),
+    [loggingOut, setLoggingOut] = useState(false),
     [saving, setSaving] = useState(false),
     [name, setName] = useState(""),
     [notes, setNotes] = useState(""),
@@ -104,6 +105,29 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       })),
     [],
   );
+  useEffect(() => {
+    // A project navigation starts with an empty composer, never a previous draft.
+    setDrafts({});
+  }, [pathname]);
+  async function logout() {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await api("POST", "/api/v1/auth/logout", {});
+      csrf.current = "";
+      ledger.current = new SendLedger();
+      setDrafts({});
+      setQuestionDrafts({});
+      setProjects([]);
+      setSession(null);
+      router.replace("/login");
+      router.refresh();
+    } catch (e) {
+      notice(errorText(e));
+    } finally {
+      setLoggingOut(false);
+    }
+  }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     if (saving) return;
@@ -211,6 +235,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
                 <button onClick={() => router.push("/admin")}>服务管理</button>
               )}
               <span className="account-name">{session.user.email}</span>
+              <button disabled={loggingOut} onClick={() => void logout()}>
+                {loggingOut ? "正在退出…" : "退出登录"}
+              </button>
             </div>
           </header>
           {children}

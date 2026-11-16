@@ -3,6 +3,7 @@ import {existsSync} from 'node:fs';
 import {readFile,stat} from 'node:fs/promises';import {resolve} from 'node:path';import {pathToFileURL} from 'node:url';
 import {createDockerSandbox} from './lib/isolation.mjs';
 import {createIsolatedRuntime} from './lib/isolated-runtime.mjs';
+import {createPublicNetwork} from './lib/public-network.mjs';
 import {createWorkerRunner} from './lib/runner.mjs';import {createWorkerServer} from './lib/server.mjs';
 if(!process.argv.includes('--config'))throw Error('Explicit --config file required');
 const configFile=resolve(process.argv[process.argv.indexOf('--config')+1] || '');
@@ -16,7 +17,7 @@ if(config.formalService===true){
  const candidateRoot=resolve(import.meta.dirname,'../..');
  const protectedRoots=[existsSync(resolve(candidateRoot,'dsh-workbench'))?candidateRoot:import.meta.dirname,...(config.isolation?.protectedRoots || [])];
  const sandbox=createDockerSandbox({...config.isolation,workspaceRoot:config.workspaceRoot,protectedRoots});
- isolationCheck=()=>sandbox.check();isolation=await isolationCheck();runtime=createIsolatedRuntime({...config,sandbox});
+ isolationCheck=()=>sandbox.check();isolation=await isolationCheck();runtime=createIsolatedRuntime({...config,sandbox,network:createPublicNetwork({enabled:config.network?.enabled===true,workspaceRoot:config.workspaceRoot})});
 }else{
  if(typeof config.engineModule!=='string' || !config.engineModule.startsWith('/'))throw Error('Use an explicit trusted engine module absolute path');
  const {createRuntime}=await import(pathToFileURL(config.engineModule));runtime=await createRuntime(config);

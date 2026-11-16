@@ -42,6 +42,7 @@ export const EVENT_TYPES = [
   'interaction_cancelled',
   'message_created',
   'manager_message',
+  'project_imported',
   'message_completed',
   'message_stream',
   'question_pending',

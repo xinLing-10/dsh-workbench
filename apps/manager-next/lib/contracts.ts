@@ -29,6 +29,8 @@ export type Interaction = {
   questions?: Question[];
 };
 export type Message = {
+  clarification?: boolean;
+  sources?: { url: string; title: string; sha256: string; fetchedAt: string }[];
   id: string | number;
   role: string;
   text: string;

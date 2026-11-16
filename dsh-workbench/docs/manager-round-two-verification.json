@@ -1,0 +1,35 @@
+{
+  "date": "2026-11-17",
+  "scope": "local-only",
+  "node": {
+    "passed": 420,
+    "failed": 0,
+    "skipped": 2
+  },
+  "browser": {
+    "checks": 17,
+    "uncaughtErrors": 0,
+    "fictional": true
+  },
+  "modelCalls": 0,
+  "deployed": false,
+  "pushed": false,
+  "publicNetwork": {
+    "githubMain": "read",
+    "githubRaw": "ECONNRESET",
+    "searchResults": 6,
+    "npmPackage": {
+      "name": "is-number@7.0.0",
+      "bytes": 3730,
+      "installed": false
+    }
+  },
+  "screenshots": [
+    "round-two-composer.png",
+    "round-two-project-import.png",
+    "round-two-questions.png",
+    "round-two-authorization.png",
+    "round-two-mobile.png",
+    "round-two-deep-questions.png"
+  ]
+}

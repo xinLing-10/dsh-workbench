@@ -98,3 +98,11 @@ test('a saved answer waits for the other active execution and resumes the same r
  assert.equal((await f.api('POST',f.path+'/interactions/'+q.id+'/respond',{answer:'自己'})).status,200);assert.equal(executionFor(f.db,id).state,'waiting');assert.equal(f.db.prepare('SELECT state FROM interaction_requests WHERE id=?').get(q.id).state,'answered');assert.equal(calls,1);
  f.db.prepare("UPDATE worker_executions SET state='completed' WHERE operation_id='op_other_activity'").run();f.db.prepare("UPDATE worker_leases SET state='revoked' WHERE id=?").run(lease.id);await until(()=>executionFor(f.db,id).state==='completed');assert.equal(calls,1);
 });
+
+test('trusted source receipts survive signed Worker completion and project history reads',async t=>{
+ const sources=[{url:'https://example.com/guide',title:'虚构来源，不是真实抓取',sha256:'a'.repeat(64),fetchedAt:new Date().toISOString()}];
+ const f=await fixture(t,async()=>({status:'completed',reason:{kind:'completed'},text:'根据[1]给出虚构说明；这是离线测试。',sources,artifacts:[]}));
+ const op=await f.queue('离线来源回执');await f.coordinator.tick();await until(()=>f.db.prepare("SELECT state FROM operations WHERE id=?").get(op)?.state==='completed');
+ const messages=await f.api('GET',f.path+'/messages');assert.equal(messages.status,200);assert.deepEqual(messages.data.messages.find(m=>m.operationId===op&&m.kind==='message_completed').sources,sources);
+ const event=JSON.parse(f.db.prepare("SELECT payload_json FROM project_events WHERE operation_id=? AND type='message_completed'").get(op).payload_json);assert.deepEqual(event.sources,sources);
+});

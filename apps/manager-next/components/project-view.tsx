@@ -10,6 +10,8 @@ import { Markdown } from "./markdown";
 import { InteractionCard } from "./interactions";
 import { ArtifactPanel } from "./artifact-panel";
 import { SourcesDialog } from "./sources-dialog";
+import { ResizableInput } from "./resizable-input";
+import { CoreClarification } from "./core-clarification";
 const prompts = [
   "我有一个想法，帮我一起理清楚。",
   "我想修改已有项目，先帮我分析需要哪些资料。",
@@ -33,6 +35,9 @@ export function ProjectView({ projectId }: { projectId: string }) {
     }>(() => ledger.pending(projectId)?.learning || { action: "question" }),
     [showArtifacts, setShowArtifacts] = useState(false),
     [sources, setSources] = useState(false),
+    [sourcePurpose, setSourcePurpose] = useState<"learning" | "modify">(
+      "learning",
+    ),
     [sending, setSending] = useState(false),
     [stopping, setStopping] = useState(false),
     [loadError, setLoadError] = useState(""),
@@ -143,9 +148,14 @@ export function ProjectView({ projectId }: { projectId: string }) {
       (b.createdAt || "").localeCompare(a.createdAt || ""),
     )[0];
   const text = drafts[projectId] || "";
+  const permission = detail?.interactions.find(
+    (x) =>
+      x.kind === "permission" &&
+      (!x.expiresAt || Date.parse(x.expiresAt) > Date.now()),
+  );
   async function send(event: React.FormEvent) {
     event.preventDefault();
-    if (sending || !text.trim()) return;
+    if (sending || permission || !text.trim()) return;
     const attempt = ledger.attempt(
         projectId,
         text.trim(),
@@ -247,7 +257,22 @@ export function ProjectView({ projectId }: { projectId: string }) {
           >
             任务与学习
           </button>
-          <button onClick={() => setSources(true)}>项目资料 / 学习</button>
+          <button
+            onClick={() => {
+              setSourcePurpose("learning");
+              setSources(true);
+            }}
+          >
+            项目资料 / 学习
+          </button>
+          <button
+            onClick={() => {
+              setSourcePurpose("modify");
+              setSources(true);
+            }}
+          >
+            修改已有项目
+          </button>
           <button
             onClick={() => setShowArtifacts(!showArtifacts)}
             aria-expanded={showArtifacts}
@@ -316,6 +341,11 @@ export function ProjectView({ projectId }: { projectId: string }) {
                     <button
                       key={p}
                       onClick={() => {
+                        if (p === prompts[1]) {
+                          setSourcePurpose("modify");
+                          setSources(true);
+                          return;
+                        }
                         setDraft(projectId, p);
                         input.current?.focus();
                       }}
@@ -323,7 +353,12 @@ export function ProjectView({ projectId }: { projectId: string }) {
                       {p} ↗
                     </button>
                   ))}
-                  <button onClick={() => setSources(true)}>
+                  <button
+                    onClick={() => {
+                      setSourcePurpose("learning");
+                      setSources(true);
+                    }}
+                  >
                     带我学懂这个项目 ↗
                   </button>
                 </div>
@@ -359,10 +394,58 @@ export function ProjectView({ projectId }: { projectId: string }) {
                         {m.task.title}
                       </small>
                     )}
+                    {m.role === "user" ? (
+                      <p className="user-message">{m.text}</p>
+                    ) : (
+                      <Markdown text={m.text} />
+                    )}
+                    {m.clarification &&
+                      m.task &&
+                      messages
+                        .filter(
+                          (x) => x.clarification && x.task?.id === m.task?.id,
+                        )
+                        .at(-1)?.id === m.id && (
+                        <CoreClarification
+                          projectId={projectId}
+                          taskId={m.task.id}
+                          refreshVersion={detail}
+                          onRefresh={refresh}
+                        />
+                      )}
+                    {m.role !== "user" && !!m.sources?.length && (
+                      <div className="message-sources" aria-label="内容来源">
+                        <strong>内容来源 / 参考资料（本任务实际读取）</strong>
+                        <ol>
+                          {m.sources.map((source, i) => (
+                            <li key={source.url}>
+                              [{i + 1}]{" "}
+                              <a
+                                href={
+                                  source.url.startsWith("https://")
+                                    ? source.url
+                                    : undefined
+                                }
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                {source.title || source.url}
+                              </a>
+                              <br />
+                              <small>
+                                读取于 {source.fetchedAt} · SHA-256{" "}
+                                {source.sha256.slice(0, 12)}
+                              </small>
+                            </li>
+                          ))}
+                        </ol>
+                        <small>来源可追溯，不代表所有推断都已经验证。</small>
+                      </div>
+                    )}
                     {m.context && m.context.refs.length > 0 && (
-                      <details className="context-evidence">
+                      <details className="context-evidence message-sources">
                         <summary>
-                          本轮参考依据
+                          本轮项目参考依据
                           {m.context.truncated ? "（部分摘录）" : ""}
                         </summary>
                         <ul>
@@ -380,24 +463,21 @@ export function ProjectView({ projectId }: { projectId: string }) {
                         </ul>
                       </details>
                     )}
-                    {m.role === "user" ? (
-                      <p className="user-message">{m.text}</p>
-                    ) : (
-                      <Markdown text={m.text} />
-                    )}
                   </div>
                 </li>
               ))}
             </ol>
             <div className="interactions">
-              {detail?.interactions.map((x) => (
-                <InteractionCard
-                  key={x.id}
-                  interaction={x}
-                  projectId={projectId}
-                  onRefresh={refresh}
-                />
-              ))}
+              {detail?.interactions
+                .filter((x) => x.kind !== "permission")
+                .map((x) => (
+                  <InteractionCard
+                    key={x.id}
+                    interaction={x}
+                    projectId={projectId}
+                    onRefresh={refresh}
+                  />
+                ))}
             </div>
           </div>
           {jump && (
@@ -420,111 +500,127 @@ export function ProjectView({ projectId }: { projectId: string }) {
               </span>
               <span className="live-state">{live}</span>
             </div>
-            <form className="composer" onSubmit={send}>
-              <div className="task-context row">
-                <label>
-                  本轮目标{" "}
-                  <select
-                    aria-label="本轮目标"
-                    value={taskId || ""}
-                    onChange={(e) => {
-                      const t = detail?.tasks?.find(
-                        (t) => t.id === e.target.value,
-                      );
-                      setTaskId(t?.id || null);
-                      if (t) setMode(t.kind);
-                      setLearningAction({ action: "question" });
-                    }}
-                  >
-                    <option value="">开启新任务</option>
-                    {detail?.tasks?.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.kind === "learning" ? "学习" : "任务"} · {t.title}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {(!taskId || mode === "learning") && (
-                  <div
-                    className="task-mode-actions"
-                    role="group"
-                    aria-label="本轮处理方式"
-                  >
-                    {!taskId && (
-                      <>
-                        <button
-                          type="button"
-                          aria-pressed={mode === "work"}
-                          onClick={() => setMode("work")}
-                        >
-                          制作 / 答疑
-                        </button>
-                        <button
-                          type="button"
-                          aria-pressed={mode === "learning"}
-                          onClick={() => setMode("learning")}
-                        >
-                          陪我学习
-                        </button>
-                      </>
-                    )}
-                    {mode === "learning" && (
-                      <button
-                        type="button"
-                        aria-pressed={learningAction.action === "plan"}
-                        onClick={() => {
-                          setLearningAction({ action: "plan" });
-                          if (!text.trim())
-                            setDraft(
-                              projectId,
-                              "请根据当前项目资料，为零基础的我安排每天20分钟的学习计划。",
-                            );
-                        }}
-                      >
-                        制定学习计划
-                      </button>
-                    )}
-                  </div>
+            {permission ? (
+              <div
+                className="composer authorization-composer"
+                aria-label="操作授权确认"
+              >
+                <p className="muted">
+                  当前项目：{detail?.project.name} ·
+                  仅授权下方这一次操作。普通消息草稿暂时保留。
+                </p>
+                <InteractionCard
+                  key={permission.id}
+                  interaction={permission}
+                  projectId={projectId}
+                  onRefresh={refresh}
+                  composer
+                />
+                {(detail?.interactions.filter((x) => x.kind === "permission")
+                  .length || 0) > 1 && (
+                  <small>还有其他待授权操作，请逐项核对。</small>
                 )}
               </div>
-              <label className="sr-only" htmlFor="message-text">
-                给管家发消息
-              </label>
-              <textarea
-                id="message-text"
-                ref={input}
-                rows={3}
-                maxLength={30000}
-                placeholder="说说你的想法，或者问一个问题…"
-                value={text}
-                onChange={(e) => setDraft(projectId, e.target.value)}
-              />
-              <div className="composer-actions">
-                <span className="muted">先沟通，操作前会征求你的许可</span>
-                <div className="row">
-                  {active &&
-                    (detail?.capabilities.nativeStop ||
-                      detail?.capabilities.workerProtocol ||
-                      detail?.capabilities.simulation) && (
-                      <button
-                        type="button"
-                        disabled={stopping}
-                        onClick={() => void stop()}
-                      >
-                        {stopping ? "正在核对停止…" : "停止当前任务"}
-                      </button>
-                    )}
-                  <button
-                    type="submit"
-                    className="primary send-button"
-                    disabled={sending || !text.trim()}
-                  >
-                    <span aria-hidden="true">↑</span>
-                    <span>{sending ? "发送中…" : "发送"}</span>
-                  </button>
+            ) : (
+              <form className="composer" onSubmit={send}>
+                <div className="task-context row">
+                  <label>
+                    本轮目标{" "}
+                    <select
+                      aria-label="本轮目标"
+                      value={taskId || ""}
+                      onChange={(e) => {
+                        const t = detail?.tasks?.find(
+                          (t) => t.id === e.target.value,
+                        );
+                        setTaskId(t?.id || null);
+                        if (t) setMode(t.kind);
+                        setLearningAction({ action: "question" });
+                      }}
+                    >
+                      <option value="">开启新任务</option>
+                      {detail?.tasks?.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.kind === "learning" ? "学习" : "任务"} · {t.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {(!taskId || mode === "learning") && (
+                    <div
+                      className="task-mode-actions"
+                      role="group"
+                      aria-label="本轮处理方式"
+                    >
+                      {!taskId && (
+                        <>
+                          <button
+                            type="button"
+                            aria-pressed={mode === "work"}
+                            onClick={() => setMode("work")}
+                          >
+                            制作 / 答疑
+                          </button>
+                          <button
+                            type="button"
+                            aria-pressed={mode === "learning"}
+                            onClick={() => setMode("learning")}
+                          >
+                            陪我学习
+                          </button>
+                        </>
+                      )}
+                      {mode === "learning" && (
+                        <button
+                          type="button"
+                          aria-pressed={learningAction.action === "plan"}
+                          onClick={() => {
+                            setLearningAction({ action: "plan" });
+                            if (!text.trim())
+                              setDraft(
+                                projectId,
+                                "请根据当前项目资料，为零基础的我安排每天20分钟的学习计划。",
+                              );
+                          }}
+                        >
+                          制定学习计划
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            </form>
+                <ResizableInput
+                  value={text}
+                  inputRef={input}
+                  onChange={(value) => setDraft(projectId, value)}
+                />
+                <div className="composer-actions">
+                  <span className="muted">先沟通，操作前会征求你的许可</span>
+                  <div className="row">
+                    {active &&
+                      (detail?.capabilities.nativeStop ||
+                        detail?.capabilities.workerProtocol ||
+                        detail?.capabilities.simulation) && (
+                        <button
+                          type="button"
+                          disabled={stopping}
+                          onClick={() => void stop()}
+                        >
+                          {stopping ? "正在核对停止…" : "停止当前任务"}
+                        </button>
+                      )}
+                    <button
+                      type="submit"
+                      className="primary send-button"
+                      disabled={sending || !text.trim()}
+                    >
+                      <span aria-hidden="true">↑</span>
+                      <span>{sending ? "发送中…" : "发送"}</span>
+                    </button>
+                  </div>
+                </div>
+              </form>
+            )}
             <small className="composer-footnote">
               管家的回答可能有疏漏，请阅读并确认重要成果。
             </small>
@@ -542,8 +638,19 @@ export function ProjectView({ projectId }: { projectId: string }) {
       {sources && (
         <SourcesDialog
           projectId={projectId}
+          purpose={sourcePurpose}
           onClose={() => setSources(false)}
           onLearn={learn}
+          onModify={() => {
+            setSources(false);
+            setMode("work");
+            setTaskId(null);
+            setDraft(
+              projectId,
+              "请根据我导入的已有项目，先说明现有功能与限制，再帮我整理这次修改的需求。我想修改的是：",
+            );
+            input.current?.focus();
+          }}
         />
       )}
     </main>
