@@ -46,6 +46,7 @@ P0 前置验证已形成部分证据，尚未全部通过：[P0 兼容性记录]
 ## 仓库结构
 
 - `dsh-workbench/`：工作台前端、Host 接口、知识与文档管理、测试。
+- `dsh-video-studio/`：视频工作台插件（Phase 1 垂直切片：项目、分镜 JSON、Revideo 渲染、版本和下载），见 [插件说明](dsh-video-studio/README.md) 与 [实现记录](dsh-video-studio/docs/phase-1.md)。
 - `spec-analyst-preset/`：需求分析师角色配置。
 - `stage-presets/`：设计、开发、测试和交付角色配置。
 
@@ -156,3 +157,5 @@ npm test
 最新本地业务实现：[阶段执行、知识、交付与深度陪学补齐](dsh-workbench/docs/business-loop-completion.md)（未部署；高可用与真实模型验收边界见文档）。
 
 第二轮本地改进：退出登录、项目切换、已有项目导入、选项澄清、输入区授权、可调整输入区及受控联网来源，详见[实现与验证记录](dsh-workbench/docs/manager-round-two-implementation.md)。尚未部署；客户操作、管理员边界和运维配置分别见三类手册。
+
+第三轮独立网页支持陪学主动申请检索、实际阅读来源、课程资料和原创题解析，以及对话/课程/成果预览的公式排版。实现、验证及导出边界见[第三轮记录](dsh-workbench/docs/manager-round-three-implementation.md)。

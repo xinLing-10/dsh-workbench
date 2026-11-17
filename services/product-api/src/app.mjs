@@ -152,7 +152,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
     serviceBudget.expireHolds();
     const controller=new AbortController();const abort=()=>{if(!res.writableEnded)controller.abort();};res.on('close',abort);
     const stream=createMessageStream({db,run,requestId:body.id,append:appendEvent,publish:emit,authorize:()=>requireExecution(db,claims)});
-    try{const coreJob=db.prepare('SELECT kind FROM core_sessions WHERE operation_id=?').get(claims.operationId);const learningOnly=coreJob?coreJob.kind!=='work':operationTask(db,claims.operationId)?.kind==='learning';const readTools=(body.body?.tools||[]).filter(t=>['read_public_web','search_public_web','ask_user_question'].includes(t.name));const modelBody=learningOnly?{...Object.fromEntries(Object.entries(body.body||{}).filter(([key])=>!['tools','tool_choice'].includes(key))),...(readTools.length?{tools:readTools,tool_choice:{type:'auto'}}:{})}:body.body;const data=await modelGateway.message({operationId:claims.operationId,id:body.id,body:modelBody,onText:delta=>stream.text(delta),signal:controller.signal,authorizeDispatch:()=>requireExecution(db,claims)});if(!res.destroyed)sendJson(res,200,{ok:true,data});}finally{try{stream.close();}finally{res.off('close',abort);}}
+    try{const coreJob=db.prepare('SELECT kind FROM core_sessions WHERE operation_id=?').get(claims.operationId);const learningOnly=coreJob?coreJob.kind!=='work':operationTask(db,claims.operationId)?.kind==='learning';const readTools=(body.body?.tools||[]).filter(t=>['read_public_web','search_public_web','ask_user_question'].includes(t.name));const modelBody=learningOnly?{...Object.fromEntries(Object.entries(body.body||{}).filter(([key])=>!['tools','tool_choice'].includes(key))),...(readTools.length?{tools:readTools,tool_choice:body.body?.tool_choice?.type==='tool'&&readTools.some(t=>t.name===body.body.tool_choice.name)?{type:'tool',name:body.body.tool_choice.name}:{type:'auto'}}:{})}:body.body;const data=await modelGateway.message({operationId:claims.operationId,id:body.id,body:modelBody,onText:delta=>stream.text(delta),signal:controller.signal,authorizeDispatch:()=>requireExecution(db,claims)});if(!res.destroyed)sendJson(res,200,{ok:true,data});}finally{try{stream.close();}finally{res.off('close',abort);}}
   });
 
   // requireSession enforces authentication, Origin AND CSRF for every POST.
@@ -419,7 +419,7 @@ export function createApp({ db, config, bridge, managerRuntime = null, modelGate
         projectId: project.id,
         type: 'message_created',
         operationId: id,
-        payload: { text, state: 'queued', task:linkedTask, ...(body.mode!==undefined||body.taskId!==undefined||body.taskTitle!==undefined?{taskRequest:task,...(learning?{learningRequest:learning}: {})}:{}), ...(lesson?{learning:{...lesson,prompt:undefined}}:{}), context:{...context,text:undefined}, ...(context.text?{workerText,sourcePaths:context.refs.filter(r=>r.type==='source').map(r=>r.path),sourceTruncated:context.truncated}:{}) },
+        payload: { text, state: 'queued', task:linkedTask, ...(body.mode!==undefined||body.taskId!==undefined||body.taskTitle!==undefined?{taskRequest:task,...(learning?{learningRequest:learning}: {})}:{}), ...(lesson?{learning:{...lesson,prompt:undefined}}:{}), context:{...context,text:undefined}, ...((lesson||context.text)?{workerText,sourcePaths:context.refs.filter(r=>r.type==='source').map(r=>r.path),sourceTruncated:context.truncated}:{}) },
       });
       db.exec('COMMIT');
     } catch (error) {

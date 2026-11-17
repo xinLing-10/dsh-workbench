@@ -6,13 +6,10 @@ import { DeliveryTemplates } from "./delivery-templates";
 import { LearningDetails } from "./learning-details";
 import type { ComponentProps } from "react";
 import { Markdown } from "./markdown";
-import type { BusinessTask } from "../lib/contracts";
+import { LessonMaterials } from "./lesson-materials";
+import type { LearningPlan, BusinessTask } from "../lib/contracts";
 type Message = { id: string; role: string; text: string };
-type Plan = {
-  id: string;
-  title: string;
-  lessons: { id: string; title: string; objective: string }[];
-};
+type Plan = LearningPlan;
 type Workflow = {
   revision: number;
   receipts: string[];
@@ -454,7 +451,10 @@ export function WorkflowPanel({
                     {v.learning.plan.lessons.map((l) => (
                       <article key={l.id}>
                         <h4>{l.title}</h4>
-                        <p>{l.objective}</p>
+                        <LessonMaterials
+                          lesson={l}
+                          evidence={v.learning.plan!.evidence}
+                        />
                         <button
                           onClick={() =>
                             void act("learning-lesson", {

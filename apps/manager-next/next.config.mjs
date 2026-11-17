@@ -12,6 +12,7 @@ if (
   throw Error("MANAGER_API_ORIGIN must be a fixed private backend origin");
 export default {
   output: "standalone",
+  agentRules: false,
   poweredByHeader: false,
   compress: false,
   images: { unoptimized: true },

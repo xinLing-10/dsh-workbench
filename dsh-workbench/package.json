@@ -47,7 +47,8 @@
     "core/",
     "scripts/check-manager-core.mjs",
     "document-writer.js",
-    "requirements-policy.js"
+    "requirements-policy.js",
+    "learning-policy.js"
   ],
   "dsh": {
     "bundle": {

@@ -52,6 +52,9 @@ export type Message = {
   streamState?: string;
 };
 export type LearningPlan = {
+  evidence?: {
+    sources: { id: string; path: string; url?: string; title?: string }[];
+  };
   id: string;
   title: string;
   lessons: {
@@ -60,6 +63,14 @@ export type LearningPlan = {
     objective: string;
     status: string;
     question: string;
+    materials?: string;
+    sourceIds?: string[];
+    quiz?: {
+      question: string;
+      answer: string;
+      explanation: string;
+      original?: boolean;
+    }[];
     minutes: number;
   }[];
 };

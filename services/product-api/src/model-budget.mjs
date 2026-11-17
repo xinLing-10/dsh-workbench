@@ -20,7 +20,7 @@ export function inputReservation(body,{toolNames=[],allowedTools=TEST_TOOLS}={})
  }));
  if(body.system!==undefined&&!text(body.system))throw Error('Only inline text allowed');
  for(const m of body.messages)if(!['user','assistant'].includes(m.role)||!content(m.content)||Object.keys(m).some(k=>k!=='role'&&k!=='content'))throw Error('Only bounded text/tool messages allowed');
- if(body.tools!==undefined&&(!Array.isArray(body.tools)||body.tools.length>2||body.tools.some(t=>!toolNames.includes(t.name)||typeof t.description!=='string'||!t.input_schema||typeof t.input_schema!=='object'||Object.keys(t).some(k=>!['name','description','input_schema'].includes(k)))))throw Error('Unsupported tool schema');
+ if(body.tools!==undefined&&(!Array.isArray(body.tools)||body.tools.length>toolNames.length||new Set(body.tools.map(t=>t?.name)).size!==body.tools.length||body.tools.some(t=>!toolNames.includes(t.name)||typeof t.description!=='string'||!t.input_schema||typeof t.input_schema!=='object'||Object.keys(t).some(k=>!['name','description','input_schema'].includes(k)))))throw Error('Unsupported tool schema');
  if(body.tool_choice!==undefined){const t=body.tool_choice;if(!t||!['auto','any','tool'].includes(t.type)||Object.keys(t).some(k=>!['type','name'].includes(k))||(t.type==='tool'&&!toolNames.includes(t.name)))throw Error('Unsupported tool choice');}
  const bytes=Buffer.byteLength(JSON.stringify(body));if(bytes>32768)throw Error('Request too large');
  // Inline UTF-8 text/JSON only, plus conservative protocol framing. No images,

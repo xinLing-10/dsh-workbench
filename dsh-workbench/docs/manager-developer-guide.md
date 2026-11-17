@@ -310,3 +310,17 @@ Worker v1的completed回执增加可选sources（最多6项：url/title/sha256/f
 需求策略共享内核为 `dsh-workbench/core/requirements-policy.js`，Worker通过生成的本地契约副本使用，原插件需求分析preset同步规则。修改策略后运行 `node services/worker-bridge/scripts/sync-contracts.mjs`，不要手改生成文件。用户对话、工具授权、文档确认继续分开；没有通过真实模型验收前，不宣称每次都会输出完美需求方案。
 
 共享流程新增 `answer-batch` 动作：`answers:[{questionId,text}]`，一次回答最新一组关键问题，沿用revision/requestId围栏；不把答案当作阶段执行授权。`manager_message`投影clarification标记，网页按当前任务读取同一份共享状态并生成选项/补充表单。
+
+### 第二轮服务器发布核对（2026-11-17）
+
+`bafa5a7` 已发布到原试用实例，Next构建API目标为8110，正式前端仍监听8120。五份私有Worker配置开启受控联网；不改变工具容器的 `--network=none`，不提供任意联网shell或递归依赖安装。API/Worker共用新发布目录，模块无额外依赖；schema13及原账本保留。备份、哈希、无模型探针与回退依据见[定向试用部署记录](../../deploy/service/trial-status.md)。原开发验证JSON记录的是发布前快照，不能用其 `deployed:false` 判断当前线上状态。
+
+### 网关工具清单与运行时兼容回归
+
+受控联网运行时声明5项固定工具，正式 `SERVICE_TOOLS` 必须全部覆盖；预算输入校验按已授权工具清单长度限制数量，并拒绝重复名称。实验默认仍只允许原实验清单，不扩展任意工具。预占前校验错误通过 `validation/400` 返回，隔离运行时以明确失败结束；缺失模型回执依然按不确定处理，不能混淆两者。`service-budget.test.mjs` 新增完整运行时到网关的虚构模型回归，及非法/重复工具在无预占、无上游调用情况下的拒绝测试。本次API/Worker/共享契约回归208通过、2条件跳过。
+
+### 第三轮：陪学检索与公式
+
+架构、研究门槛、可信W来源回执、Worker可选learning元数据、公式安全限制和验证见[第三轮实施记录](manager-round-three-implementation.md)。正式API与所有Worker须成套切换，不能让旧Worker接收新学习元数据；数据库仍为schema13，无新增迁移。原本的网关两工具热修复同时纳入源码。
+
+Next新增锁定KaTeX依赖，生产构建固定API8110，字体作为本地静态资源随standalone发布。原插件和原文档转换器没有新增原生数学渲染，客户手册已说明差异。不要用本轮离线模型/网络夹具替代真实模型教学质量或容量验收。

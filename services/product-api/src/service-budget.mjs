@@ -2,7 +2,7 @@ import {runAuthorization} from './run-authorization.mjs';
 /** Atomic, durable token limits; credentials and experimental ledgers are never stored here. */
 import {bodyDigest} from '../../../packages/manager-contracts/tokens.mjs';
 import {inputReservation,usageTotal} from './model-budget.mjs';
-export const SERVICE_TOOLS=['ask_user_question','run_project_command'];
+export const SERVICE_TOOLS=Object.freeze(['ask_user_question','run_project_command','read_public_web','search_public_web','download_project_dependency']);
 const error=(message,status=409)=>Object.assign(new Error(message),{status,code:'capability_unavailable'});
 const integer=n=>Number.isSafeInteger(n)&&n>=0;
 export const isPlatformAdmin=(db,id)=>Boolean(db.prepare(`SELECT 1 FROM platform_admins WHERE user_id=?`).get(id));
@@ -45,7 +45,7 @@ export function createServiceBudget({db,clock=()=>new Date()}) {
  function forOperation(operationId){return {
   reserve(id,body,options={}){return transaction(()=>{
    if(typeof id!=='string'||!/^[A-Za-z0-9_-]{8,120}$/.test(id))throw error('无效模型调用编号',400);
-   const input=inputReservation(body,{...options,allowedTools:SERVICE_TOOLS}),amount=input+body.max_tokens;
+   let input;try{input=inputReservation(body,{...options,allowedTools:SERVICE_TOOLS});}catch(cause){throw Object.assign(new Error('模型请求在派发前校验失败：'+cause.message),{status:400,code:'validation'});}const amount=input+body.max_tokens;
    // Duplicate attempts never redispatch, even with identical payloads.
    if(db.prepare(`SELECT 1 FROM service_model_calls WHERE id=?`).get(id))throw error('调用已记录，不得重发');
    const allocation=runAuthorization(db);if(allocation && db.prepare('SELECT count(*) n FROM service_model_calls').get().n>=allocation.maxRequests)throw error('本轮模型请求总次数已达到授权上限');

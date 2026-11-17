@@ -1,3 +1,4 @@
+import {learningEvidence} from './learning-policy.js';
 import {REQUIREMENTS_POLICY} from './requirements-policy.js';
 import { scheduleObservation, scheduleSelfReview, deferReview, pauseReview, invalidateReview, reviewTarget, reviewPresentation } from './learning-review.js';
 import { mapPrompt, parseKnowledgeMap, mapTarget, verifyMapTarget } from './learning-map.js';
@@ -678,6 +679,7 @@ export function createManagerService(deps) {
         job.status = 'failed'; job.error = `执行没有正常完成（${describeReason(result.reason, result.detail)}），可以查看处理详情。`;
         sayJob(doc, job, job.error);
       } else if (job.kind === 'learning') {
+        if(result.sources?.length)job.evidence=learningEvidence(job.evidence,result.sources);
         const reply=learningReply(result.text,job.evidence);
         const observation=finishCoaching(doc.learning,job,result.text,reply.text);
         if(observation)scheduleObservation(doc.learning,observation,job);

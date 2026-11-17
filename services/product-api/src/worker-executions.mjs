@@ -14,7 +14,11 @@ export function executionJob(db,run) {
  const payload=JSON.parse(row?.payload_json || '{}');
  if(payload.workerText && createHash('sha256').update(JSON.stringify({type:'send_message',text:payload.text||'',...(payload.taskRequest?{task:payload.taskRequest,...(payload.learningRequest?{learning:payload.learningRequest}:{})}:{})})).digest('hex')!==run.payload_hash)throw conflict('消息快照校验失败');
  const text=payload.workerText||payload.text||'';
- return {protocolVersion:1,workerId:run.worker_id,tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,leaseId:run.lease_id,generation:run.generation,engineId:run.engine_id,payloadHash:payload.workerText?createHash('sha256').update(JSON.stringify({type:'send_message',text})).digest('hex'):run.payload_hash,deadline:run.deadline,text};
+ const core=db.prepare('SELECT kind FROM core_sessions WHERE operation_id=?').get(run.operation_id);
+ const isLearning=payload.task?.kind==='learning'||core?.kind==='learning';
+ const action=payload.learning?.action||'question';
+ const learning=isLearning?{action,research:action==='plan'||action==='lesson'||(action==='question'&&/学习计划|学习目录|学习资料|参考资料|测试题|练习题|制定.*计划|安排.*学习/.test(core?text.slice(0,1500):payload.text||''))}:null;
+ return {protocolVersion:1,workerId:run.worker_id,tenantId:run.tenant_id,projectId:run.project_id,operationId:run.operation_id,leaseId:run.lease_id,generation:run.generation,engineId:run.engine_id,payloadHash:payload.workerText?createHash('sha256').update(JSON.stringify({type:'send_message',text})).digest('hex'):run.payload_hash,deadline:run.deadline,text,...(learning?{learning}:{})};
 }
 export function requireExecution(db,claims,{allowTerminal=false}={}) {
  const run=executionFor(db,claims.operationId);

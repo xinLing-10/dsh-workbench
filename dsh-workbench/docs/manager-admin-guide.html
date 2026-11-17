@@ -1,6 +1,6 @@
 <!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>项目管家管理员使用手册</title><style>
 :root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f4f6fa;color:#223047;font:16px/1.85 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85}header{background:#172e52;color:white;padding:36px max(24px,calc((100% - 1160px)/2))}header strong{display:block;font-size:28px}header p{margin:8px 0;opacity:.85}button{font:inherit;padding:6px 16px;border:0;border-radius:8px;background:#fff;color:#172e52;cursor:pointer}.layout{max-width:1200px;margin:32px auto;display:grid;grid-template-columns:230px minmax(0,1fr);gap:30px;padding:0 22px}nav{position:sticky;top:20px;align-self:start;font-size:14px}nav a{display:block;padding:8px 10px;text-decoration:none;color:#334e74}nav a:hover{background:#e6edfa;border-radius:8px}main{background:white;padding:32px 42px;border-radius:16px;min-width:0}h1{font-size:30px;line-height:1.4}h2{font-size:23px;margin:44px 0 18px;color:#173c6a;scroll-margin-top:25px}h3{font-size:19px}strong{color:inherit}p{margin:14px 0}img{display:block;max-width:100%;height:auto;border:1px solid #e4e9f0;border-radius:10px;margin:24px auto 8px}p:has(>em){font-size:14px;color:#65748a}blockquote{margin:18px 0;background:#f0f5ff;border-left:4px solid #537ed2;padding:8px 18px;border-radius:0 8px 8px 0}li{margin:7px 0}table{border-collapse:collapse;width:100%;font-size:14px;margin:22px 0}th,td{border:1px solid #dae1eb;padding:10px 12px;text-align:left;vertical-align:top}th{background:#f0f4fa}code{background:#edf1f6;padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}a{color:#285ca9}footer{color:#6a788d;text-align:center;padding:24px;font-size:13px}@media(max-width:850px){.layout{display:block;margin-top:18px;padding:0 12px}nav{position:static;margin:0 0 20px}nav a{display:inline-block}main{padding:20px}table{display:block;overflow-x:auto}}@media print{body{background:white;font-size:11pt}header{background:white;color:black;padding:0}header button,nav,footer{display:none}.layout{display:block;padding:0;margin:0}main{padding:0}h2{break-after:avoid}img{max-height:210mm;object-fit:contain;break-inside:avoid}tr,blockquote{break-inside:avoid}a{color:inherit}@page{size:A4;margin:18mm}}
-</style></head><body><header><strong>项目管家 · 管理员使用手册</strong><p>服务概览、邀请、额度与任务核对。图文指引，离线可读。</p><button type="button" onclick="window.print()">打印 / 保存为 PDF</button></header><div class="layout"><nav aria-label="手册目录"><a href="#section-1">1. 登录与找到控制台</a><a href="#section-2">2. 每天先看服务概览</a><a href="#section-3">3. 为新用户生成邀请码</a><a href="#section-4">4. 为用户和项目配置额度</a><a href="#section-5">5. 处理待核对用量</a><a href="#section-6">6. 查找任务与核对执行</a><a href="#section-7">7. 查看管理记录</a><a href="#section-8">8. 常见情况怎么处理</a><a href="#section-9">9. 管理范围与交接</a><a href="#section-10">10. 手册维护记录</a><a href="#section-11">Next.js 新版控制台</a><a href="#section-12">业务闭环本地批次：核对排队与学习</a><a href="#section-13">本地业务闭环补齐版本的管理注意事项</a><a href="#section-14">2026-11-17 发布后的管理员登录</a><a href="#section-15">第二轮本地版本的运行管理边界（尚未部署）</a></nav><main><h1>项目管家管理员使用手册</h1>
+</style></head><body><header><strong>项目管家 · 管理员使用手册</strong><p>服务概览、邀请、额度与任务核对。图文指引，离线可读。</p><button type="button" onclick="window.print()">打印 / 保存为 PDF</button></header><div class="layout"><nav aria-label="手册目录"><a href="#section-1">1. 登录与找到控制台</a><a href="#section-2">2. 每天先看服务概览</a><a href="#section-3">3. 为新用户生成邀请码</a><a href="#section-4">4. 为用户和项目配置额度</a><a href="#section-5">5. 处理待核对用量</a><a href="#section-6">6. 查找任务与核对执行</a><a href="#section-7">7. 查看管理记录</a><a href="#section-8">8. 常见情况怎么处理</a><a href="#section-9">9. 管理范围与交接</a><a href="#section-10">10. 手册维护记录</a><a href="#section-11">Next.js 新版控制台</a><a href="#section-12">业务闭环本地批次：核对排队与学习</a><a href="#section-13">本地业务闭环补齐版本的管理注意事项</a><a href="#section-14">2026-11-17 发布后的管理员登录</a><a href="#section-15">第二轮版本的运行管理边界（已部署）</a><a href="#section-16">第三轮陪学与公式支持</a></nav><main><h1>项目管家管理员使用手册</h1>
 <p>适用版本：personal_manager / 1.24.1　｜　最后核对：2026-11-17　｜　面向平台管理员和服务负责人</p>
 <p>本手册说明如何使用可视化控制台管理邀请、额度和任务。客户聊天与交付操作见 <a href="manager-user-guide.md">客户使用手册</a>；安装、权限授予、模型配置和备份部署见 <a href="manager-developer-guide.md">开发者与运维手册</a>。管理员无需照着开发文档执行日常操作。</p>
 <p><strong>图片来自当前界面的真实浏览器验证，使用虚构租户、账号、用量及任务，不是生产数据，也不表示模型实际运行或公网服务已开放。</strong> 当前服务器是否开放以 <a href="../../deploy/service/acceptance-status.md">服务器验收记录</a> 为准。本手册不会把本机演示入口当作正式服务地址。</p>
@@ -375,14 +375,23 @@
 <h2 id="section-14">2026-11-17 发布后的管理员登录</h2>
 <p>使用运维单独交付的管理员账号，在原站点 <code>/login</code> 登录后打开 <code>/admin</code>，也可以点“服务管理”。管理员和客户共用登录页，没有单独的管理员注册表单；邀请码不授予平台权限。账号初始不分配模型额度或Worker，管理权限不代表免费执行模型任务。账号密码通过私有文件交付，切勿发到项目对话或上传资料；目前页面没有修改密码入口，需要轮换时联系受信任运维。</p>
 <p>维护记录：业务闭环版已部署；核对真实管理员登录、授予前403、授予后管理与邀请码接口200，验证会话已退出。未登录管理接口401。控制台布局与按钮无变化，沿用已有脱敏截图；客户额度、模型凭据与历史记录不变。新增流程仍需后续真实业务验证，不能因部署通过跳过核对。</p>
-<h2 id="section-15">第二轮本地版本的运行管理边界（尚未部署）</h2>
+<h2 id="section-15">第二轮版本的运行管理边界（已部署）</h2>
 <p>客户新增退出、项目副本导入、集中选项、输入区授权与来源展示。管理控制台布局未变，现有截图适用。退出是撤销当前会话，不是销户；管理员账号也使用同一退出入口。</p>
 <ul>
 <li>受控联网由运维在可信Worker配置中启用，当前没有控制台联网开关。命令容器仍无网络；网页、搜索和依赖下载是独立工具，每次仍需客户明确授权。启用服务能力不代表批准某次操作。</li>
 <li>客户原项目在电脑上不变；服务器可修改副本与只读资料分别管理。资料移除不会删除副本，不要把参考列表当作全部服务器文件清单。</li>
 <li>依赖下载限定固定来源、可信摘要、16MiB单包与64份/64MiB项目限制。没有自动安装或完整依赖解析功能，清理文件由受信任运维核对任务状态后进行。</li>
 <li>来源保存在原执行回执和项目事件内；与任务/项目一同授权。来源提供可追溯依据，不是对事实准确性的保证；网络失败不能手动登记成功引用。</li>
-<li>本轮没有修改模型预算、凭据或现有试用账号。真实模型需求质量、线上网络可达性和灰度行为仍需另行验收；控制台不能把不确定执行改成完成来绕过核对。</li>
+<li>本轮没有修改模型预算、凭据或现有试用账号。服务器已用无模型探针验证公开GitHub读取及元数据拒绝；真实模型需求质量、其他网络目标和完整业务流程仍需另行验收；控制台不能把不确定执行改成完成来绕过核对。</li>
 </ul>
 <p>维护记录：同步第二轮客户交互和网络操作边界，控制台操作不变，沿用原截图；离线版同步。</p>
+<p>维护记录（2026-11-17，第二轮发布）：<code>bafa5a7</code> 已在原定向试用实例上线，五个Worker启用受控联网，每次客户授权规则不变。原28条模型账本和额度配置保留，未发起付费测试。管理控制台布局未变，继续使用原截图；部署、备份与回退详情见<a href="../../deploy/service/trial-status.md">发布记录</a>。</p>
+<h3>2026-11-17 对话网关兼容修复</h3>
+<p>联网工具启用后，旧网关仅允许两项工具并限制最多两份声明，导致新请求在预占之前被拒绝。已同步五项固定工具清单，重复或未授权声明仍拒绝；派发前请求校验失败返回明确失败，不进入不确定等待。控制台入口和操作不变，原截图沿用。既有待核对执行须保留证据，不可改成成功、删除记录或直接重发；本次经负责人授权隔离旧Worker并以独立新身份继续原队列。额度和模型凭据未改动，具体结果见部署记录。</p>
+<p>恢复结果核对：原排队消息已实际调用模型，但达到既有2048输出上限而以failed结束，7242token已完整结算；无成功交付回执，不应对客户称作已完成。队列已清空、旧待核对记录保留，禁止自动重试；输出策略优化须另行实施。</p>
+<h2 id="section-16">第三轮陪学与公式支持</h2>
+<p>管理员入口和按钮不变，沿用现有截图。用户制定计划时将看到搜索与读取两次独立的授权环节；启用Worker网络不代表替客户批准。陪学通道只保留提问、公开搜索与网页读取，命令和依赖下载依然拒绝。</p>
+<p>计划中W来源编号来自实际读取回执，搜索结果不算已核验来源。用户拒绝或读取失败时，可得到明确标注缺口的初步方案；不要把它称作已完成领域核实。每轮网络/模型上限和既有总预算不变，逐课交付不是自动续写。</p>
+<p>公式显示由独立网页本地字体支持，无需管理员配置外部CDN。复杂文档导出仍按原能力处理，不能因为网页公式正常就保证PDF/Word/PPTX公式均已专业排版。</p>
+<p>维护记录（2026-11-17）：已核对第三轮客户新交互与管理员运行边界，管理员操作不变；客户截图及双方离线手册同步。</p>
 </main></div><footer>本文件由 manager-admin-guide.md 生成，截图已内嵌，离线可读。</footer></body></html>

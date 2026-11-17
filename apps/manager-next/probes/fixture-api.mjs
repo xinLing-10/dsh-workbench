@@ -48,6 +48,7 @@ for (const [id, name, t] of [
   ["prj_next_question", "虚构演示 · 多题问答", tenant.id],
   ["prj_next_permission", "虚构演示 · 操作授权", tenant.id],
   ["prj_next_core", "虚构演示 · 深度澄清", tenant.id],
+  ["prj_round_three", "虚构陪学 · 从零学概率", tenant.id],
   ["prj_next_other", "虚构独立客户项目", other.id],
 ])
   db.prepare(
@@ -154,8 +155,98 @@ for (const id of [
   "prj_next_question",
   "prj_next_permission",
   "prj_next_core",
+  "prj_round_three",
 ])
   await mkdir(join(workspaceRoot, id));
+const roundThreePlan = {
+  id: "plan_round_three",
+  title: "从零理解概率（虚构课程）",
+  evidence: {
+    sources: [
+      {
+        id: "W1",
+        title: "示例外部教材（模拟读取，未联网）",
+        url: "https://example.com/guide",
+        path: "https://example.com/guide",
+      },
+    ],
+  },
+  lessons: [
+    {
+      id: "lesson_probability",
+      title: "第一课：理解概率",
+      objective: "用日常例子解释概率，认识公式 $P(A)=\\frac{m}{n}$。",
+      question: "概率为0.5是什么意思？",
+      minutes: 20,
+      status: "unread",
+      sourceIds: ["W1"],
+      materials:
+        "先理解分子与分母，再联系你提供的资料。**项目事实、外部知识与推断应分别说明。**",
+      quiz: [
+        {
+          question: "掷一枚均匀硬币，正面朝上的概率是多少？",
+          answer: "$P(A)=\\frac{1}{2}$",
+          explanation: "两种等可能结果中，有一种符合要求。",
+          original: true,
+        },
+      ],
+    },
+  ],
+};
+db.prepare("INSERT INTO business_tasks VALUES(?,?,?,?,?,?)").run(
+  "tsk_round_three",
+  tenant.id,
+  "prj_round_three",
+  "虚构概率学习",
+  "learning",
+  at,
+);
+db.prepare("INSERT INTO business_learning VALUES(?,?,?)").run(
+  "tsk_round_three",
+  JSON.stringify(roundThreePlan),
+  1,
+);
+for (const [type, text] of [
+  ["message_created", "给我一个学习计划，并展示专业公式。"],
+  [
+    "message_completed",
+    "# 从概念到公式\n\n这是虚构界面测试，未调用模型，来源与课程均为夹具。\n\n英文变量与中文：$a^2+b^2=c^2$；希腊字母 \\(\\alpha+\\beta=\\theta\\)。\n\n$$\\int_0^1 x\\,dx=\\frac{1}{2}$$\n\n$$\\begin{bmatrix}1&0\\\\0&1\\end{bmatrix}$$\n\n价格 $5 and $10，代码 `$x$` 保留原样。\n\n不支持的公式：$\\unknownFormula{x}$",
+  ],
+])
+  appendEvent(db, {
+    tenantId: tenant.id,
+    projectId: "prj_round_three",
+    type,
+    payload: {
+      text:
+        type === "message_completed"
+          ? text +
+            "\n\n$$" +
+            Array.from({ length: 30 }, (_, i) => "a_{" + (i + 1) + "}").join(
+              "+",
+            ) +
+            "$$"
+          : text,
+      fixture: true,
+      task: { id: "tsk_round_three", title: "虚构概率学习", kind: "learning" },
+    },
+  });
+const mathBytes = Buffer.from(
+  "# 虚构公式成果\n\n$$\\sum_{i=1}^{n} i=\\frac{n(n+1)}{2}$$\n\n未调用模型，未验证数学结论。",
+);
+db.prepare("INSERT INTO artifact_index VALUES(?,?,?,?,?,?,0,?)").run(
+  "art_round_three",
+  tenant.id,
+  "prj_round_three",
+  "概率学习资料.md",
+  createHash("sha256").update(mathBytes).digest("hex"),
+  1,
+  at,
+);
+db.prepare("INSERT INTO artifact_contents VALUES(?,?,NULL,NULL,NULL)").run(
+  "art_round_three",
+  mathBytes,
+);
 const config = {
   port: Number(process.env.FIXTURE_API_PORT || 8106),
   simulate: true,
@@ -258,6 +349,60 @@ const streams = new Set();
 const server = createServer((q, r) => {
   if (
     q.method === "POST" &&
+    q.url === "/api/v1/__fixture/stream-math" &&
+    q.headers["x-fixture-control"] === "1" &&
+    q.headers.origin === config.publicOrigin
+  ) {
+    const op = "op_math_stream_" + Date.now(),
+      at = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO operations(id,tenant_id,project_id,type,request_id,payload_hash,state,created_at,updated_at) VALUES(?,?,?,'send_message',?,'fixture','running',?,?)",
+    ).run(op, tenant.id, "prj_round_three", op, at, at);
+    const chunks = [
+      "# 虚构公式流式测试\n\n",
+      "$$\\frac{",
+      "1}{2}",
+      "$$",
+      "\n\n已闭合的希腊字母：$\\alpha+\\beta$。",
+    ];
+    let index = 0,
+      text = "";
+    const tick = setInterval(() => {
+      if (index < chunks.length) {
+        text += chunks[index++];
+        app.publish(
+          appendEvent(db, {
+            tenantId: tenant.id,
+            projectId: "prj_round_three",
+            operationId: op,
+            type: "message_stream",
+            payload: { text, preview: true, requestId: "call_math_fixture" },
+          }),
+        );
+      } else {
+        clearInterval(tick);
+        db.prepare("UPDATE operations SET state='completed' WHERE id=?").run(
+          op,
+        );
+        app.publish(
+          appendEvent(db, {
+            tenantId: tenant.id,
+            projectId: "prj_round_three",
+            operationId: op,
+            type: "message_completed",
+            payload: { text, fixture: true },
+          }),
+        );
+      }
+    }, 700);
+    tick.unref();
+    r.writeHead(200, { "content-type": "application/json" });
+    r.end(JSON.stringify({ fixture: true, modelCalls: 0 }));
+    return;
+  }
+
+  if (
+    q.method === "POST" &&
     q.url === "/api/v1/__fixture/stream" &&
     q.headers["x-fixture-control"] === "1" &&
     q.headers.origin === config.publicOrigin
@@ -302,7 +447,7 @@ const server = createServer((q, r) => {
             payload: {
               text,
               fixture: true,
-              ...(type === "message_completed"
+              ...(true
                 ? {
                     sources: [
                       {

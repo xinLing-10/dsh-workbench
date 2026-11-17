@@ -30,7 +30,7 @@ test('context is bounded, tracks changes and names missing evidence',async()=>{
 });
 test('tutor prompt distinguishes evidence from inference and rejects impossible citation ranges',()=>{
  const c={sources:[{id:'S1',path:'README.md',lines:3}],gaps:[]};
- const prompt=learningPrompt([], '原理导读', c);assert.match(prompt,/不执行任何工具/);assert.match(prompt,/历史回答不是本轮事实依据/);
+ const prompt=learningPrompt([], '原理导读', c);assert.match(prompt,/不执行命令/);assert.match(prompt,/检索/);assert.match(prompt,/历史回答不是本轮事实依据/);
  const reply=learningReply(JSON.stringify({reply:'事实 [S1:L1-L3]；伪造 [S2:L1]；越界 [S1:L2-L20]',proposal:{stage:'build',instruction:'修改代码'}}),c);
  assert.match(reply.text,/\[S1:L1-L3\]/);assert.equal(reply.text.match(/引用超出/g).length,2);assert.equal(reply.proposal,undefined);
 });

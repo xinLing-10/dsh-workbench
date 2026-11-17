@@ -1,4 +1,5 @@
 "use client";
+import { LessonMaterials } from "./lesson-materials";
 import { WorkflowPanel } from "./workflow-panel";
 import { useState } from "react";
 import type { BusinessTask } from "../lib/contracts";
@@ -94,7 +95,10 @@ export function BusinessPanel({
                   <h4>
                     {l.title} · {l.minutes} 分钟
                   </h4>
-                  <p>{l.objective}</p>
+                  <LessonMaterials
+                    lesson={l}
+                    evidence={t.learning!.plan!.evidence}
+                  />
                   <p className="muted">
                     {l.status === "self-checked"
                       ? "已自评理解"

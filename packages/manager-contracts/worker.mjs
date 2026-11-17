@@ -4,8 +4,9 @@ export const WORKER_EVENT_TYPES=['started','heartbeat','running','completed','ca
 export const WORKER_TERMINAL=['completed','cancelled','failed'];
 const id=v=>typeof v==='string' && /^[A-Za-z0-9_-]{1,120}$/.test(v);
 export function validateJob(job) {
-  const fields=['protocolVersion','workerId','tenantId','projectId','operationId','leaseId','engineId','generation','payloadHash','text','deadline'];
+  const fields=['protocolVersion','workerId','tenantId','projectId','operationId','leaseId','engineId','generation','payloadHash','text','deadline','learning'];
   if(!job || Object.keys(job).some(k=>!fields.includes(k)) || job.protocolVersion!==1 || !['workerId','tenantId','projectId','operationId','leaseId','engineId'].every(k=>id(job[k])) || !Number.isSafeInteger(job.generation) || job.generation<1 || !/^[a-f0-9]{64}$/.test(job.payloadHash || '') || typeof job.text!=='string' || !job.text.trim() || Buffer.byteLength(job.text)>32768 || !Number.isFinite(Date.parse(job.deadline)))throw new Error('Invalid worker job');
+  if(job.learning!==undefined && (!job.learning || Object.keys(job.learning).some(k=>!['action','research'].includes(k)) || !['plan','lesson','question','reflect'].includes(job.learning.action) || typeof job.learning.research!=='boolean'))throw new Error('Invalid learning job');
   return job;
 }
 export function validateWorkerEvent(event) {
@@ -27,5 +28,5 @@ export function validateWorkerEvent(event) {
   return event;
 }
 export function sameExecution(a,b) {
-  return ['workerId','tenantId','projectId','operationId','leaseId','generation','engineId','payloadHash'].every(k=>a[k]===b[k]);
+  return ['workerId','tenantId','projectId','operationId','leaseId','generation','engineId','payloadHash'].every(k=>a[k]===b[k]) && JSON.stringify(a.learning||null)===JSON.stringify(b.learning||null);
 }
