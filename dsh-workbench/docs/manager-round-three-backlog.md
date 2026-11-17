@@ -1,7 +1,7 @@
 # 管家第三轮修改清单
 
 日期：2026-11-17（Asia/Shanghai）。
-状态：**已获授权实施，已完成本地实现与验证，待提交推送和服务器发布**。实现与边界见[第三轮实施记录](manager-round-three-implementation.md)。
+状态：**已完成实现、本地验证、远程推送及服务器发布**。实现与边界见[第三轮实施记录](manager-round-three-implementation.md)。
 
 ## R3-01 陪学主动补充领域知识
 
